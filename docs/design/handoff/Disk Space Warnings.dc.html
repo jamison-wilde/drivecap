@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas"><style>
+body{margin:0;background:#f0eee9;font-family:'Segoe UI',system-ui,sans-serif}a{color:#1a1a1a}a:hover{color:#005fb8}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}.dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}.dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.6)}.dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}.dv-opt:target .dv-oid{background:#2a78d6;color:#fff}.dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.6)}
+:root{--idle:.5;--ticks:block}
+.dsk{--desk:#dfe5ec;--win:#fff;--sf:#f9f9f9;--bd:rgba(0,0,0,.16);--tx:#1b1b1b;--tx2:#575757;--mut:#6b6b6b;--track:rgba(0,0,0,.14);--warn:#c77800;--warnT:#8a5100;--direT:#c42b1c;--hov:rgba(0,0,0,.06)}
+.dsk[data-theme=dark]{--desk:#16181c;--win:#1f2125;--sf:#2b2b2b;--bd:rgba(255,255,255,.16);--tx:#fff;--tx2:#c8c8c8;--mut:#a0a0a0;--track:rgba(255,255,255,.18);--warn:#f5b83d;--warnT:#f5b83d;--direT:#ff9c94;--hov:rgba(255,255,255,.08)}
+[data-sev]{--pbg:var(--sf);--pbd:var(--bd);--ptx:var(--tx);--pn:var(--tx2);--pval:var(--warnT);--pfill:var(--warn);--ptrack:var(--track);--c:var(--warn);--gt:var(--track);--gv:var(--tx);--gw:6px;--pulse:none;--tk:linear-gradient(90deg,transparent calc(25% - 1px),var(--pbg) 0 25%,transparent 0 calc(50% - 1px),var(--pbg) 0 50%,transparent 0 calc(75% - 1px),var(--pbg) 0 75%,transparent 0)}
+[data-sev=dire]{--pbg:#c42b1c;--pbd:transparent;--ptx:#fff;--pn:#fff;--pval:#fff;--pfill:#fff;--ptrack:rgba(255,255,255,.35);--c:#e5372b;--gt:#e5372b;--gv:var(--direT);--gw:10px;--pulse:dvpulse}
+[data-sev=na]{--ptx:var(--mut);--pn:var(--mut);--pval:var(--mut);--pfill:transparent;--ptrack:repeating-linear-gradient(90deg,var(--mut) 0 3px,transparent 3px 6px);--c:transparent;--gt:repeating-linear-gradient(0deg,var(--mut) 0 3px,transparent 3px 6px);--gv:var(--mut)}
+[data-sev=snz]{--ptx:var(--mut);--pn:var(--mut);--pval:var(--mut);--pfill:transparent;--ptrack:transparent;--tk:none;--c:var(--mut)}
+[data-sev=ok]{--pval:var(--tx);--pfill:var(--mut);--c:var(--mut)}
+[data-idle=p]{opacity:var(--idle)}
+[data-on=y]{background:var(--tx)!important;color:var(--sf)!important}
+[data-nopulse] [data-sev]{--pulse:none}
+[data-idle=y]{opacity:var(--idle);transition:opacity .2s}[data-idle=y]:hover{opacity:1}
+@keyframes dvpulse{0%{box-shadow:0 0 0 0 rgba(229,55,43,.6)}70%,100%{box-shadow:0 0 0 8px rgba(229,55,43,0)}}
+</style></helmet>
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Combined view — stack card from <a class="dv-oid" href="#1b">1b</a>, all drives expanded, warned drives only when minimized</span></div>
+<div class="dv-opts">
+<div class="dv-opt" id="2a"><div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Stack card with per-drive snooze and header tools; expanded lists every configured drive, minimized only the warned ones — all specimens are clickable</div>
+<div class="dv-card" style="width:680px;display:flex">
+<sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+<div class="dsk" data-theme="{{ t.id }}" style="flex:1;min-width:0;padding:20px;background:var(--desk);display:flex;flex-direction:column;gap:22px;font:12px 'Segoe UI',system-ui,sans-serif;color:var(--tx)">
+  <sc-for list="{{ views }}" as="w" hint-placeholder-count="5">
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+    <span style="font-size:11px;color:var(--tx2)">{{ w.label }}</span>
+    <div style="width:270px;display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+      <sc-if value="{{ w.full }}" hint-placeholder-val="{{ true }}">
+      <div data-idle="{{ w.idle }}" data-sev="{{ w.headSev }}" style="align-self:stretch;background:var(--sf);border:1px solid var(--bd);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.22);overflow:hidden;animation:var(--pulse) 2.4s ease-out infinite">
+        <div style="display:flex;align-items:center;gap:2px;height:28px;padding:0 3px 0 9px;color:var(--tx)">
+          <span style="width:6px;height:12px;margin-right:6px;background-image:radial-gradient(currentColor 1px,transparent 1.3px);background-size:3px 4px;opacity:.55;cursor:grab"></span>
+          <span style="width:8px;height:8px;margin-right:6px;border-radius:50%;background:var(--c)"></span>
+          <span style="font-weight:600;margin-right:auto">{{ w.title }}</span>
+          <span title="Snooze all" data-on="{{ w.snzOn }}" onClick="{{ w.snoozeAll }}" style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;cursor:pointer;font-size:10px;font-weight:600" style-hover="background:var(--hov)">Zz</span>
+          <span title="Idle opacity" data-on="{{ w.opOn }}" onClick="{{ w.toggleOp }}" style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;cursor:pointer" style-hover="background:var(--hov)"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.25" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M7 1.75a5.25 5.25 0 0 1 0 10.5z" fill="currentColor"></path></svg></span>
+          <span title="Settings" data-on="{{ w.setOn }}" onClick="{{ w.toggleSet }}" style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;cursor:pointer" style-hover="background:var(--hov)"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="1.9 2.18"></circle><circle cx="7" cy="7" r="3.2" fill="none" stroke="currentColor" stroke-width="2"></circle></svg></span>
+          <span title="{{ w.minTitle }}" onClick="{{ w.toggleMin }}" style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;cursor:pointer" style-hover="background:var(--hov)"><svg width="14" height="14" viewBox="0 0 14 14"><path d="{{ w.chev }}" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg></span>
+        </div>
+        <sc-if value="{{ w.showRows }}" hint-placeholder-val="{{ true }}">
+        <sc-for list="{{ w.rows }}" as="v" hint-placeholder-count="3">
+        <div data-sev="{{ v.sev }}" style="display:grid;grid-template-columns:24px minmax(0,1fr) auto 20px;column-gap:6px;row-gap:3px;align-items:center;padding:4px 6px 8px 10px;background:var(--pbg);color:var(--ptx);border-top:1px solid var(--bd)">
+          <span style="font-weight:700">{{ v.id }}</span>
+          <span style="color:var(--pn);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ v.name }}</span>
+          <span style="font-weight:600;color:var(--pval);font-variant-numeric:tabular-nums">{{ v.val }}</span>
+          <span style="height:20px"><sc-if value="{{ v.canSnz }}" hint-placeholder-val="{{ true }}"><span title="Snooze this drive" data-on="{{ v.on }}" onClick="{{ v.snooze }}" style="display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:4px;cursor:pointer;font-size:10px;font-weight:600" style-hover="background:var(--ptrack)">Zz</span></sc-if></span>
+          <span style="grid-column:1 / -1;margin-right:4px;position:relative;height:3px;border-radius:2px;background:var(--ptrack);overflow:hidden"><span style="position:absolute;inset:0 auto 0 0;width:{{ v.pct }};background:var(--pfill)"></span><span style="position:absolute;inset:0;background:var(--tk);display:var(--ticks)"></span></span>
+        </div>
+        </sc-for>
+        </sc-if>
+      </div>
+      </sc-if>
+      <sc-if value="{{ w.popOp }}" hint-placeholder-val="{{ false }}">
+      <div style="width:200px;margin-right:28px;padding:8px 10px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:4px">
+        <span style="display:flex;justify-content:space-between;font-size:11px;color:var(--tx2)"><span>Idle opacity</span><span style="color:var(--tx);font-weight:600">{{ idleLabel }}</span></span>
+        <input type="range" min="20" max="100" step="5" value="{{ idlePct }}" onChange="{{ setIdle }}" style="width:100%;margin:0;background:transparent;accent-color:var(--tx)">
+      </div>
+      </sc-if>
+      <sc-if value="{{ w.popSet }}" hint-placeholder-val="{{ false }}">
+      <div style="width:230px;padding:10px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.28);display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:11px;color:var(--tx2)">Snooze for</span>
+          <div style="display:flex;gap:4px">
+            <span data-on="{{ w.d10 }}" onClick="{{ w.dur10 }}" style="padding:3px 8px;border:1px solid var(--bd);border-radius:4px;cursor:pointer">10 min</span>
+            <span data-on="{{ w.d1h }}" onClick="{{ w.dur1h }}" style="padding:3px 8px;border:1px solid var(--bd);border-radius:4px;cursor:pointer">1 h</span>
+            <span data-on="{{ w.dnx }}" onClick="{{ w.durNext }}" style="padding:3px 8px;border:1px solid var(--bd);border-radius:4px;cursor:pointer">Next level</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:8px">
+          <span style="display:flex;flex-direction:column;gap:2px"><span style="font-size:11px;color:var(--tx2)">Font</span><span>Segoe UI, 9 pt</span></span>
+          <span style="padding:3px 8px;border:1px solid var(--bd);border-radius:4px;cursor:pointer" style-hover="background:var(--hov)">Change…</span>
+        </div>
+        <span style="height:1px;background:var(--bd)"></span>
+        <span style="cursor:pointer">Edit config.json</span>
+        <span style="cursor:pointer">Disable disk warnings</span>
+      </div>
+      </sc-if>
+    </div>
+  </div>
+  </sc-for>
+</div>
+</sc-for>
+</div></div>
+
+<div class="dv-opt" style="width:320px"><div class="dv-olabel">Notes</div>
+<div class="dv-card" style="padding:18px 20px;font:12px/1.55 'Segoe UI',system-ui,sans-serif;color:#1a1a1a;display:flex;flex-direction:column;gap:12px">
+  <div><div style="font-weight:600;margin-bottom:4px">Snooze</div>Zz on a row snoozes that drive in one click; click again to wake it. Zz in the header snoozes everything and collapses the card to its header. A new level crossing or entering dire breaks through either.</div>
+  <div><div style="font-weight:600;margin-bottom:4px">Header tools</div>Snooze all, idle opacity, settings, minimize. The dot left of the title shows the worst awake severity. Both popups are separate topmost windows anchored under the header, so they never fade with the surface.</div>
+  <div><div style="font-weight:600;margin-bottom:4px">Minimized</div>Expanded lists every configured drive and mount, worst first, healthy ones with a neutral full bar. Minimized keeps the same card but only the rows in warning or dire; snoozed drives, healthy drives and unreachable shares are dropped. The chevron switches between the two.</div>
+  <div><div style="font-weight:600;margin-bottom:4px">Settings</div>Snooze duration and font sit in the gear popup; Change… opens the Windows font picker. The duration set there is what one-click snooze uses.</div>
+</div></div>
+</div>
+<p class="dv-next">Try next: "start minimized, expand on a level crossing" · "move opacity into the gear popup" · "show <a class="dv-oid" href="#2a">2a</a> over a fake editor window"</p>
+</section>
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Three directions for the disk-space warning surface</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a"><div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Pill — one capsule per at-risk volume, stacked worst-first</div>
+<div class="dv-card" style="width:600px;display:flex">
+<sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+<div class="dsk" data-theme="{{ t.id }}" style="flex:1;min-width:0;padding:20px;background:var(--desk);display:flex;flex-direction:column;gap:20px;font:12px 'Segoe UI',system-ui,sans-serif;color:var(--tx)">
+  <sc-for list="{{ specs }}" as="s" hint-placeholder-count="4">
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+    <span style="font-size:11px;color:var(--tx2)">{{ s.label }}</span>
+    <div data-idle="{{ s.idle }}" style="display:flex;flex-direction:column;gap:6px">
+      <sc-for list="{{ s.vols }}" as="v" hint-placeholder-count="1">
+      <div data-sev="{{ v.sev }}" style="display:grid;grid-template-columns:6px 22px 54px 56px;align-items:center;gap:8px;height:28px;padding:0 12px 0 9px;border-radius:14px;background:var(--pbg);border:1px solid var(--pbd);box-shadow:0 2px 8px rgba(0,0,0,.2);color:var(--ptx);font-weight:700;animation:var(--pulse) 2.4s ease-out infinite">
+        <span style="width:6px;height:12px;background-image:radial-gradient(currentColor 1px,transparent 1.3px);background-size:3px 4px;opacity:.55"></span>
+        <span>{{ v.id }}</span>
+        <span style="text-align:right;font-weight:600;color:var(--pval);font-variant-numeric:tabular-nums">{{ v.val }}</span>
+        <span style="position:relative;height:4px;border-radius:2px;background:var(--ptrack);overflow:hidden"><span style="position:absolute;inset:0 auto 0 0;width:{{ v.pct }};background:var(--pfill)"></span><span style="position:absolute;inset:0;background:var(--tk);display:var(--ticks)"></span></span>
+      </div>
+      </sc-for>
+    </div>
+  </div>
+  </sc-for>
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+    <span style="font-size:11px;color:var(--tx2)">Hover — solid, snooze appears, tooltip gives the label</span>
+    <div data-sev="warn" style="display:flex;align-items:center;gap:8px;height:28px;padding:0 4px 0 9px;border-radius:14px;background:var(--pbg);border:1px solid var(--tx2);box-shadow:0 4px 14px rgba(0,0,0,.28);font-weight:700">
+      <span style="width:6px;height:12px;background-image:radial-gradient(currentColor 1px,transparent 1.3px);background-size:3px 4px"></span>
+      <span style="width:22px">C:</span>
+      <span style="width:54px;text-align:right;font-weight:600;color:var(--pval)">14.8 GB</span>
+      <span style="position:relative;width:56px;height:4px;border-radius:2px;background:var(--ptrack);overflow:hidden"><span style="position:absolute;inset:0 auto 0 0;width:74%;background:var(--pfill)"></span><span style="position:absolute;inset:0;background:var(--tk);display:var(--ticks)"></span></span>
+      <span style="display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:11px;background:var(--track);font-size:10px;font-weight:600">Zz</span>
+    </div>
+    <span style="padding:4px 8px;background:var(--sf);border:1px solid var(--bd);border-radius:4px;font-size:11px;box-shadow:0 2px 6px rgba(0,0,0,.18)">C: Windows — 14.8 GB free, next warning at 10 GB</span>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+    <span style="font-size:11px;color:var(--tx2)">Snoozed — pills collapse to a hollow dot</span>
+    <span style="width:8px;height:8px;border-radius:50%;border:2px solid var(--warn)"></span>
+  </div>
+</div>
+</sc-for>
+</div></div>
+
+<div class="dv-opt" id="1b"><div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Stack card — one surface, a row per volume, header carries state, grip and snooze</div>
+<div class="dv-card" style="width:680px;display:flex">
+<sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+<div class="dsk" data-theme="{{ t.id }}" style="flex:1;min-width:0;padding:20px;background:var(--desk);display:flex;flex-direction:column;gap:20px;font:12px 'Segoe UI',system-ui,sans-serif;color:var(--tx)">
+  <sc-for list="{{ specs }}" as="s" hint-placeholder-count="4">
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+    <span style="font-size:11px;color:var(--tx2)">{{ s.label }}</span>
+    <div data-idle="{{ s.idle }}" data-sev="{{ s.sev }}" style="width:250px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.22);overflow:hidden;animation:var(--pulse) 2.4s ease-out infinite">
+      <div style="display:flex;align-items:center;gap:8px;height:26px;padding:0 10px 0 9px;color:var(--tx)">
+        <span style="width:6px;height:12px;background-image:radial-gradient(currentColor 1px,transparent 1.3px);background-size:3px 4px;opacity:.55"></span>
+        <span style="font-weight:600">Disk space</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--tx2)">{{ s.head }}</span>
+      </div>
+      <sc-for list="{{ s.vols }}" as="v" hint-placeholder-count="1">
+      <div data-sev="{{ v.sev }}" style="display:grid;grid-template-columns:24px minmax(0,1fr) auto;column-gap:6px;row-gap:5px;align-items:baseline;padding:6px 10px 8px;background:var(--pbg);color:var(--ptx);border-top:1px solid var(--bd)">
+        <span style="font-weight:700">{{ v.id }}</span>
+        <span style="color:var(--pn);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ v.name }}</span>
+        <span style="font-weight:600;color:var(--pval);font-variant-numeric:tabular-nums">{{ v.val }}</span>
+        <span style="grid-column:1 / -1;position:relative;height:3px;border-radius:2px;background:var(--ptrack);overflow:hidden"><span style="position:absolute;inset:0 auto 0 0;width:{{ v.pct }};background:var(--pfill)"></span><span style="position:absolute;inset:0;background:var(--tk);display:var(--ticks)"></span></span>
+      </div>
+      </sc-for>
+    </div>
+  </div>
+  </sc-for>
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+    <span style="font-size:11px;color:var(--tx2)">Hover header → snooze; right-click → menu</span>
+    <div style="display:flex;align-items:flex-start;gap:4px">
+      <div style="width:170px;padding:4px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.28);display:flex;flex-direction:column">
+        <span style="display:flex;justify-content:space-between;padding:5px 8px;border-radius:4px;background:var(--hov)"><span>Snooze</span><span>▸</span></span>
+        <span style="padding:5px 8px">Hide this volume</span>
+        <span style="padding:5px 8px">Font…</span>
+        <span style="display:flex;justify-content:space-between;padding:5px 8px"><span>Scale</span><span>▸</span></span>
+        <span style="display:flex;justify-content:space-between;padding:5px 8px"><span>Idle opacity</span><span>▸</span></span>
+        <span style="height:1px;margin:4px 0;background:var(--bd)"></span>
+        <span style="padding:5px 8px">Settings (edit config)</span>
+        <span style="padding:5px 8px">Disable disk warnings</span>
+      </div>
+      <div style="width:120px;padding:4px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.28);display:flex;flex-direction:column">
+        <span style="padding:5px 8px">10 minutes</span>
+        <span style="padding:5px 8px">1 hour</span>
+        <span style="padding:5px 8px">Until next level</span>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start">
+    <span style="font-size:11px;color:var(--tx2)">Snoozed — header only, at idle opacity</span>
+    <div style="display:flex;align-items:center;gap:8px;height:24px;padding:0 10px 0 9px;background:var(--sf);border:1px solid var(--bd);border-radius:8px;opacity:var(--idle)">
+      <span style="width:6px;height:12px;background-image:radial-gradient(currentColor 1px,transparent 1.3px);background-size:3px 4px"></span>
+      <span style="font-size:11px">Zz · 8 min left</span>
+    </div>
+  </div>
+</div>
+</sc-for>
+</div></div>
+
+<div class="dv-opt" id="1c"><div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Edge gauge — docked to a screen edge, a segment per volume, labels on hover</div>
+<div class="dv-card" style="width:600px;display:flex">
+<sc-for list="{{ themes }}" as="t" hint-placeholder-count="2">
+<div class="dsk" data-theme="{{ t.id }}" style="flex:1;min-width:0;padding:20px;background:var(--desk);display:flex;flex-direction:column;gap:20px;font:12px 'Segoe UI',system-ui,sans-serif;color:var(--tx)">
+  <sc-for list="{{ specs }}" as="s" hint-placeholder-count="4">
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <span style="font-size:11px;color:var(--tx2)">{{ s.label }}</span>
+    <div style="position:relative;height:124px;background:var(--win);border:1px solid var(--bd);border-right:2px solid var(--tx)">
+      <span style="position:absolute;left:10px;bottom:8px;font-size:11px;color:var(--tx2)">screen edge →</span>
+      <div data-idle="{{ s.idle }}" style="position:absolute;right:0;top:0;bottom:0;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;gap:3px">
+        <sc-for list="{{ s.vols }}" as="v" hint-placeholder-count="1">
+        <span data-sev="{{ v.sev }}" style="position:relative;width:var(--gw);height:26px;border-radius:3px 0 0 3px;background:var(--gt);overflow:hidden;animation:var(--pulse) 2.4s ease-out infinite"><span style="position:absolute;inset:auto 0 0 0;height:{{ v.pct }};min-height:3px;background:var(--c)"></span></span>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+  </sc-for>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <span style="font-size:11px;color:var(--tx2)">Hover — expands to labels; drag slides it along the edge</span>
+    <div style="position:relative;height:170px;background:var(--win);border:1px solid var(--bd);border-right:2px solid var(--tx)">
+      <div style="position:absolute;right:0;top:50%;transform:translateY(-50%);width:214px;background:var(--sf);border:1px solid var(--bd);border-right:0;border-radius:8px 0 0 8px;box-shadow:0 4px 14px rgba(0,0,0,.25);padding:3px 0 3px 10px;display:flex;flex-direction:column;gap:3px">
+        <sc-for list="{{ four }}" as="v" hint-placeholder-count="4">
+        <div data-sev="{{ v.sev }}" style="display:grid;grid-template-columns:22px minmax(0,1fr) auto var(--gw);column-gap:6px;align-items:center;height:26px;color:var(--tx)">
+          <span style="font-weight:700">{{ v.id }}</span>
+          <span style="color:var(--tx2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ v.name }}</span>
+          <span style="font-weight:600;color:var(--gv);font-variant-numeric:tabular-nums">{{ v.val }}</span>
+          <span style="position:relative;align-self:stretch;border-radius:3px 0 0 3px;background:var(--gt);overflow:hidden"><span style="position:absolute;inset:auto 0 0 0;height:{{ v.pct }};min-height:3px;background:var(--c)"></span></span>
+        </div>
+        </sc-for>
+        <span style="display:flex;justify-content:space-between;padding:5px 10px 4px 0;border-top:1px solid var(--bd);font-size:11px;color:var(--tx2)"><span>Zz Snooze 10 min</span><span>Right-click for more</span></span>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <span style="font-size:11px;color:var(--tx2)">Snoozed — thins to a 2 px neutral line</span>
+    <div style="position:relative;height:60px;background:var(--win);border:1px solid var(--bd);border-right:2px solid var(--tx)"><span style="position:absolute;right:0;top:12px;bottom:12px;width:2px;background:var(--mut)"></span></div>
+  </div>
+</div>
+</sc-for>
+</div></div>
+
+<div class="dv-opt" style="width:340px"><div class="dv-olabel">Notes — proposed answers, applies to all three</div>
+<div class="dv-card" style="padding:18px 20px;font:12px/1.55 'Segoe UI',system-ui,sans-serif;color:#1a1a1a;display:flex;flex-direction:column;gap:14px">
+  <div><div style="font-weight:600;margin-bottom:4px">Reading the bar</div>The bar is runway, not disk usage: full at the threshold (20 GB), empty at 0. Gaps mark the step levels (15 / 10 / 5), so each crossing is visible as the fill passing a gap.</div>
+  <div><div style="font-weight:600;margin-bottom:4px">Open questions</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 10px"><span style="color:#575757">Default spot</span><span>Bottom-right of the primary work area, 12 px in, above the tray. <a class="dv-oid" href="#1c">1c</a> docks to the right edge instead.</span><span style="color:#575757">Surfaces</span><span>One window for all volumes (<a class="dv-oid" href="#1b">1b</a>, <a class="dv-oid" href="#1c">1c</a>). <a class="dv-oid" href="#1a">1a</a> draws separate pills but moves them as one group.</span><span style="color:#575757">Dire</span><span>Persistent and solid red. The pulse is a 2.4 s halo, no opacity flashing.</span><span style="color:#575757">Snooze trace</span><span>Yes, a minimal one per direction, shown above.</span></div></div>
+  <div><div style="font-weight:600;margin-bottom:4px">Timings</div>Fade in 200 ms · hold 4 s (6 s on a level crossing) · fade out 600 ms · linger 3 s after hover or drag ends.</div>
+  <div><div style="font-weight:600;margin-bottom:4px">Click-through</div>Click-through while idle or fading. Becomes interactive after the cursor rests inside its bounds for 150 ms, and stays so until the linger ends. Dire is always interactive.</div>
+  <div><div style="font-weight:600;margin-bottom:4px">Knobs</div><div style="display:grid;grid-template-columns:auto 1fr;gap:4px 10px"><span style="color:#575757">Menu</span><span>Snooze, hide volume, font, scale, idle opacity, disable</span><span style="color:#575757">Config only</span><span>Colors (warning, dire, text, background × light/dark), fade and hold durations, reminder interval range, snooze default, per-volume rules, position</span></div></div>
+  <div><div style="font-weight:600;margin-bottom:4px">Leaning</div><a class="dv-oid" href="#1b">1b</a>. It scales to 3+ volumes without growing sideways, has room for labels, and the header gives drag and snooze a stable hit area.</div>
+</div></div>
+
+</div>
+<p class="dv-next">Try next: "<a class="dv-oid" href="#1b">1b</a> with the pill row from <a class="dv-oid" href="#1a">1a</a>" · "make <a class="dv-oid" href="#1b">1b</a> a live prototype with a free-space slider" · "horizontal version of <a class="dv-oid" href="#1c">1c</a>"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;idleOpacity&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.5,&quot;min&quot;:0.2,&quot;max&quot;:1,&quot;step&quot;:0.05,&quot;tsType&quot;:&quot;number&quot;},&quot;direPulse&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;levelTicks&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = { idle: null, views: [
+    { label: 'Expanded · all configured drives and mounts', ids: ['E:', 'D:', 'C:', 'F:', 'Z:'], min: false, pop: null, dur: 'm', snz: {} },
+    { label: 'One drive snoozed', ids: ['E:', 'D:', 'C:', 'F:'], min: false, pop: null, dur: 'm', snz: { 'D:': true } },
+    { label: 'Opacity popup · surface previews the value', ids: ['E:', 'D:', 'C:', 'F:'], min: false, pop: 'op', dur: 'm', snz: {} },
+    { label: 'Settings popup', ids: ['D:', 'C:', 'F:'], min: false, pop: 'set', dur: 'm', snz: {} },
+    { label: 'Minimized · warned drives only · idle (hover it)', ids: ['E:', 'D:', 'C:', 'F:', 'Z:'], min: true, pop: null, dur: 'm', snz: {} }
+  ] };
+  views() {
+    const base = [
+      { id: 'E:', name: 'SanDisk 64GB', val: '1.4 GB', pct: '7%', sev: 'dire' },
+      { id: 'D:', name: 'Dev', val: '6.2 GB', pct: '31%', sev: 'warn' },
+      { id: 'C:', name: 'Windows', val: '14.8 GB', pct: '74%', sev: 'warn' },
+      { id: 'F:', name: 'Data', val: '212 GB', pct: '100%', sev: 'ok' },
+      { id: 'Z:', name: '\\\\nas\\builds', val: '?', pct: '0%', sev: 'na' }
+    ];
+    return this.state.views.map((x, i) => {
+      const dur = { m: '10 min', h: '1 h', n: 'next level' }[x.dur];
+      const up = f => () => this.setState(s => ({ views: s.views.map((y, j) => j === i ? Object.assign({}, y, f(y)) : y) }));
+      const vols = base.filter(b => x.ids.includes(b.id)).map(b => {
+        const z = !!x.snz[b.id];
+        return Object.assign({}, b, { sev: z ? 'snz' : b.sev, val: z ? 'Zz ' + dur : b.val, on: z ? 'y' : 'n', canSnz: b.sev === 'warn' || b.sev === 'dire',
+          snooze: e => { e.stopPropagation(); up(y => ({ snz: Object.assign({}, y.snz, { [b.id]: !z }) }))(); } });
+      });
+      const awake = vols.filter(v => v.sev === 'warn' || v.sev === 'dire');
+      const allSnz = awake.length === 0;
+      const all = {}; vols.forEach(v => { if (v.canSnz) all[v.id] = true; });
+      return {
+        label: x.label, vols, awake, full: true, rows: x.min ? awake : vols, showRows: !(x.min && allSnz), chev: x.min ? 'M3 5l4 4 4-4' : 'M3 9l4-4 4 4', minTitle: x.min ? 'Show all drives' : 'Show warned drives only',
+        popOp: x.pop === 'op', popSet: x.pop === 'set', opOn: x.pop === 'op' ? 'y' : 'n', setOn: x.pop === 'set' ? 'y' : 'n', snzOn: allSnz ? 'y' : 'n',
+        idle: x.pop === 'op' ? 'p' : x.min ? 'y' : 'n',
+        headSev: awake.some(v => v.sev === 'dire') ? 'dire' : allSnz ? 'snz' : 'warn',
+        title: allSnz ? 'Snoozed · ' + dur : 'Disk space',
+        d10: x.dur === 'm' ? 'y' : 'n', d1h: x.dur === 'h' ? 'y' : 'n', dnx: x.dur === 'n' ? 'y' : 'n',
+        dur10: up(() => ({ dur: 'm' })), dur1h: up(() => ({ dur: 'h' })), durNext: up(() => ({ dur: 'n' })),
+        toggleMin: up(y => ({ min: !y.min, pop: null })),
+        toggleOp: up(y => ({ pop: y.pop === 'op' ? null : 'op' })),
+        toggleSet: up(y => ({ pop: y.pop === 'set' ? null : 'set' })),
+        snoozeAll: up(() => ({ snz: allSnz ? {} : all }))
+      };
+    });
+  }
+  apply() {
+    const r = document.documentElement, p = this.props;
+    r.style.setProperty('--idle', String(this.state.idle ?? p.idleOpacity ?? 0.5));
+    r.style.setProperty('--ticks', (p.levelTicks ?? true) ? 'block' : 'none');
+    if (p.direPulse ?? true) r.removeAttribute('data-nopulse'); else r.setAttribute('data-nopulse', '');
+  }
+  componentDidMount() { this.apply(); }
+  componentDidUpdate() { this.apply(); }
+  renderVals() {
+    const C = { id: 'C:', name: 'Windows', val: '14.8 GB', pct: '74%', sev: 'warn' };
+    const Cd = { id: 'C:', name: 'Windows', val: '1.9 GB', pct: '9%', sev: 'dire' };
+    const D = { id: 'D:', name: 'Dev', val: '6.2 GB', pct: '31%', sev: 'warn' };
+    const E = { id: 'E:', name: 'SanDisk 64GB', val: '1.4 GB', pct: '7%', sev: 'dire' };
+    const N = { id: 'Z:', name: '\\\\nas\\builds', val: '?', pct: '0%', sev: 'na' };
+    return {
+      themes: [{ id: 'light' }, { id: 'dark' }],
+      views: this.views(),
+      idlePct: Math.round((this.state.idle ?? this.props.idleOpacity ?? 0.5) * 100),
+      idleLabel: Math.round((this.state.idle ?? this.props.idleOpacity ?? 0.5) * 100) + '%',
+      setIdle: e => this.setState({ idle: Number(e.target.value) / 100 }),
+      four: [E, D, C, N],
+      specs: [
+        { label: 'Warning · 1 volume · idle (hover it)', head: '1 low', sev: 'warn', idle: 'y', vols: [C] },
+        { label: 'Dire · 1 volume · persistent', head: '1 critical', sev: 'dire', idle: 'n', vols: [Cd] },
+        { label: '3 volumes · worst first', head: '1 critical · 2 low', sev: 'dire', idle: 'n', vols: [E, D, C] },
+        { label: 'Warning + unreachable share', head: '1 low · 1 offline', sev: 'warn', idle: 'n', vols: [C, N] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

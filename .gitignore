@@ -1,0 +1,11 @@
+/target
+.claude/
+*.local.md
+
+# proptest auto-generated regression seed cache (local shrink replay only)
+**/proptest-regressions/
+
+# scratch space for build/verification scripts
+tmp/
+.worktrees/
+.superpowers/
