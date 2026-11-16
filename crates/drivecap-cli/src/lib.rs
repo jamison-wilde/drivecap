@@ -27,8 +27,9 @@
 //!
 //! **Pure cores:**
 //! - [`config`] — `config.json` schema, defaults, clamping, safe load/save.
+//! - [`alerts`] — zones, warning levels, debounce, snooze, reminder schedule.
 //!
-//! The remaining pure cores (alerts, model, visibility, layout, controller,
+//! The remaining pure cores (model, visibility, layout, controller,
 //! menu) and Win32 adapters (volumes, net probe, paint, card window,
 //! tray, popups) land in later tasks; `CLAUDE.md` lists the planned set.
 //!
@@ -38,6 +39,7 @@
 //! - `CLAUDE.md` (repo root) — operational gotchas, build loop,
 //!   `windows = 0.61` quirks.
 
+pub mod alerts;
 pub mod clock;
 pub mod config;
 pub mod error;
