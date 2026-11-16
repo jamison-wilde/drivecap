@@ -84,7 +84,11 @@ pub fn premultiply(px: u32, coverage: f32) -> u32 {
 
 /// Calls `f(index, x_centre, y_centre)` for every buffer pixel inside `r`
 /// grown by `grow` px on each side, clipped to the buffer.
-fn each_pixel(w: i32, h: i32, r: &Rect, grow: i32, mut f: impl FnMut(usize, f32, f32)) {
+fn each_pixel(len: usize, w: i32, h: i32, r: &Rect, grow: i32, mut f: impl FnMut(usize, f32, f32)) {
+    debug_assert!(
+        len >= (w.max(0) * h.max(0)) as usize,
+        "buffer smaller than w*h: {len} < {w}*{h}"
+    );
     let (x0, y0) = ((r.x - grow).max(0), (r.y - grow).max(0));
     let (x1, y1) = ((r.right() + grow).min(w), (r.bottom() + grow).min(h));
     for y in y0..y1 {
@@ -97,7 +101,7 @@ fn each_pixel(w: i32, h: i32, r: &Rect, grow: i32, mut f: impl FnMut(usize, f32,
 /// Rewrites alpha from the card's rounded-rect coverage and premultiplies;
 /// every pixel outside the card becomes fully transparent.
 pub fn apply_card_mask(buf: &mut [u32], w: i32, h: i32, card: &Rect, radius: f32) {
-    each_pixel(w, h, &Rect::new(0, 0, w, h), 0, |i, x, y| {
+    each_pixel(buf.len(), w, h, &Rect::new(0, 0, w, h), 0, |i, x, y| {
         let cov = rounded_rect_coverage(x, y, card, radius);
         buf[i] = if cov > 0.0 {
             premultiply(buf[i], cov)
@@ -107,19 +111,18 @@ pub fn apply_card_mask(buf: &mut [u32], w: i32, h: i32, card: &Rect, radius: f32
     });
 }
 
-/// `color` at alpha `a`, premultiplied, composited under (`under`) or
-/// over the premultiplied `dst`.
-fn composite(dst: u32, color: Rgb, a: u32, under: bool) -> u32 {
+/// `color` at alpha `a`, premultiplied, composited under the
+/// premultiplied `dst`.
+fn composite_under(dst: u32, color: Rgb, a: u32) -> u32 {
     let src = [
         a,
         scale(color.0.into(), a),
         scale(color.1.into(), a),
         scale(color.2.into(), a),
     ];
-    let d = channels(dst);
-    let (top, bottom) = if under { (d, src) } else { (src, d) };
+    let top = channels(dst);
     let keep = 255 - top[0];
-    let mix = |k: usize| top[k] + scale(bottom[k], keep);
+    let mix = |k: usize| top[k] + scale(src[k], keep);
     pack(mix(0), mix(1), mix(2), mix(3))
 }
 
@@ -137,14 +140,14 @@ pub fn draw_halo(
     s: f32,
 ) {
     let reach = (HALO_TRAVEL * s).ceil() as i32 + 2;
-    each_pixel(w, h, card, reach, |i, x, y| {
+    each_pixel(buf.len(), w, h, card, reach, |i, x, y| {
         let d = rounded_rect_sdf(x, y, card, radius);
         if d <= -0.5 {
             return;
         }
         let a = halo_alpha(d, phase_ms, s);
         if a > 0 {
-            buf[i] = composite(buf[i], color, a.into(), true);
+            buf[i] = composite_under(buf[i], color, a.into());
         }
     });
 }
@@ -155,8 +158,9 @@ fn ring_coverage(px: f32, py: f32, r: &Rect, radius: f32, width: f32) -> f32 {
     ((0.5 - d).clamp(0.0, 1.0) - (0.5 - d - width).clamp(0.0, 1.0)).max(0.0)
 }
 
-/// Fallback dire treatment: a `width`-px band just inside the card edge in
-/// `color` at `alpha`, composited over the masked (premultiplied) card.
+/// Pre-mask fallback dire treatment: a `width`-px band just inside the
+/// card edge in `color` at `alpha`, blended into RGB before
+/// [`apply_card_mask`] so antialiased corners keep their coverage alpha.
 #[allow(clippy::too_many_arguments)] // mirrors draw_halo's shape
 pub fn draw_pulse_border(
     buf: &mut [u32],
@@ -168,13 +172,7 @@ pub fn draw_pulse_border(
     alpha: u8,
     width: f32,
 ) {
-    each_pixel(w, h, card, 0, |i, x, y| {
-        let cov = ring_coverage(x, y, card, radius, width);
-        if cov > 0.0 {
-            let a = (cov * f32::from(alpha)).round() as u32;
-            buf[i] = composite(buf[i], color, a, false);
-        }
-    });
+    stroke_ring(buf, w, h, card, radius, width, Rgba::new(color, alpha));
 }
 
 /// Pre-mask: blends `color` into the RGB channels at alpha `a`.
@@ -186,7 +184,7 @@ fn blend_rgb(dst: u32, color: Rgb, a: u32) -> u32 {
 
 /// Pre-mask: fills a rounded rectangle with `color`, antialiased by coverage.
 pub fn fill_rounded(buf: &mut [u32], w: i32, h: i32, r: &Rect, radius: f32, color: Rgb) {
-    each_pixel(w, h, r, 0, |i, x, y| {
+    each_pixel(buf.len(), w, h, r, 0, |i, x, y| {
         let cov = rounded_rect_coverage(x, y, r, radius);
         if cov > 0.0 {
             buf[i] = blend_rgb(buf[i], color, (cov * 255.0).round() as u32);
@@ -206,7 +204,7 @@ pub fn stroke_ring(
     width: f32,
     color: Rgba,
 ) {
-    each_pixel(w, h, r, 0, |i, x, y| {
+    each_pixel(buf.len(), w, h, r, 0, |i, x, y| {
         let cov = ring_coverage(x, y, r, radius, width);
         if cov > 0.0 {
             let a = (cov * f32::from(color.a)).round() as u32;
@@ -323,8 +321,8 @@ mod tests {
         let (w, h) = (40, 40);
         let card = Rect::new(8, 8, 24, 24);
         let mut buf = vec![0x00F9_F9F9u32; (w * h) as usize];
-        apply_card_mask(&mut buf, w, h, &card, 0.0);
         draw_pulse_border(&mut buf, w, h, &card, 0.0, Rgb(0xE5, 0x37, 0x2B), 255, 2.0);
+        apply_card_mask(&mut buf, w, h, &card, 0.0);
         assert_eq!(buf[(20 * w + 8) as usize], 0xFFE5_372B);
         assert_eq!(buf[(20 * w + 9) as usize], 0xFFE5_372B);
         assert_eq!(buf[(20 * w + 10) as usize], 0xFFF9_F9F9);
@@ -340,5 +338,13 @@ mod tests {
         let edge = buf[(10 * w) as usize] & 0xFF;
         assert!(edge.abs_diff(0x7F) <= 1, "edge {edge:#x}");
         assert_eq!(buf[(10 * w + 1) as usize] & 0x00FF_FFFF, 0x00FF_FFFF);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "buffer smaller than w*h")]
+    fn short_buffer_is_caught() {
+        let mut buf = vec![0u32; 5];
+        fill_rounded(&mut buf, 10, 10, &Rect::new(0, 0, 2, 2), 0.0, Rgb(1, 2, 3));
     }
 }

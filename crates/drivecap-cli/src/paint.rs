@@ -275,23 +275,22 @@ pub struct Painter {
     h: i32,
 }
 
-impl Default for Painter {
-    fn default() -> Self {
-        Painter::new()
-    }
-}
-
 impl Painter {
-    pub fn new() -> Painter {
-        Painter {
-            // SAFETY: a memory DC compatible with the screen; deleted on drop.
-            hdc: unsafe { CreateCompatibleDC(None) },
+    /// Creates the memory DC; fails if GDI cannot allocate one.
+    pub fn new() -> DrivecapResult<Painter> {
+        // SAFETY: a memory DC compatible with the screen; deleted on drop.
+        let hdc = unsafe { CreateCompatibleDC(None) };
+        if hdc.is_invalid() {
+            return Err(windows::core::Error::from_win32().into());
+        }
+        Ok(Painter {
+            hdc,
             bmp: HBITMAP::default(),
             old: HGDIOBJ::default(),
             bits: std::ptr::null_mut(),
             w: 0,
             h: 0,
-        }
+        })
     }
 
     /// Current DIB size in physical px.
@@ -399,16 +398,16 @@ impl Painter {
         let radius = m.px(CARD_RADIUS) as f32;
         let line = m.px(1).max(1) as f32;
         raster::stroke_ring(buf, w, h, card, radius, line, pal.border);
+        // The pulse border is blended before the mask so AA corners keep
+        // their coverage alpha; the halo lives outside the card, after it.
+        let accent = pal.dire_accent;
+        if let (Some(p), false) = (halo_phase_ms, halo_mode) {
+            let (a, bw) = (raster::border_pulse_alpha(p), m.px(DIRE_BORDER) as f32);
+            raster::draw_pulse_border(buf, w, h, card, radius, accent, a, bw);
+        }
         raster::apply_card_mask(buf, w, h, card, radius);
-        match halo_phase_ms {
-            Some(p) if halo_mode => {
-                raster::draw_halo(buf, w, h, card, radius, pal.dire_accent, p, m.s)
-            }
-            Some(p) => {
-                let (a, bw) = (raster::border_pulse_alpha(p), m.px(DIRE_BORDER) as f32);
-                raster::draw_pulse_border(buf, w, h, card, radius, pal.dire_accent, a, bw);
-            }
-            None => {}
+        if let (Some(p), true) = (halo_phase_ms, halo_mode) {
+            raster::draw_halo(buf, w, h, card, radius, accent, p, m.s);
         }
         Ok(())
     }
@@ -521,10 +520,10 @@ mod tests {
 
     fn render_at(view: &SurfaceView, dark: bool, pct: u32, halo: Option<u64>, mode: bool) -> Scene {
         let m = Metrics::new(96, pct);
-        let fonts = Fonts::new(None, &m);
-        let layout = layout::compute(view, &m, &GdiMeasure::new(&fonts));
+        let fonts = Fonts::new(None, &m).unwrap();
+        let layout = layout::compute(view, &m, &GdiMeasure::new(&fonts).unwrap());
         let pal = Palette::new(dark, &ColorOverrides::default());
-        let mut painter = Painter::new();
+        let mut painter = Painter::new().unwrap();
         let hover = Some(Hit::RowSnooze(1));
         painter
             .draw(&layout, view, &pal, &fonts, &m, hover, None, halo, mode)
@@ -546,8 +545,8 @@ mod tests {
 
     #[test]
     fn measure_widths_track_weight() {
-        let fonts = Fonts::new(None, &Metrics::new(96, 100));
-        let tm = GdiMeasure::new(&fonts);
+        let fonts = Fonts::new(None, &Metrics::new(96, 100)).unwrap();
+        let tm = GdiMeasure::new(&fonts).unwrap();
         let body = tm.width("Disk space", TextStyle::Body);
         assert!(body > 20, "body {body}");
         assert!(tm.width("Disk space", TextStyle::BodyBold) >= body);
@@ -616,11 +615,11 @@ mod tests {
     #[test]
     fn active_header_button_is_inverted() {
         let m = Metrics::new(96, 100);
-        let fonts = Fonts::new(None, &m);
+        let fonts = Fonts::new(None, &m).unwrap();
         let view = sample_view();
-        let layout = layout::compute(&view, &m, &GdiMeasure::new(&fonts));
+        let layout = layout::compute(&view, &m, &GdiMeasure::new(&fonts).unwrap());
         let pal = Palette::new(false, &ColorOverrides::default());
-        let mut p = Painter::new();
+        let mut p = Painter::new().unwrap();
         let gear = layout.buttons[HeaderButton::Settings as usize].1;
         let op = layout.buttons[HeaderButton::Opacity as usize].1;
         let hover = Some(Hit::Button(HeaderButton::Opacity));
@@ -647,13 +646,13 @@ mod tests {
     #[test]
     fn redraw_at_new_size_reallocates() {
         let m = Metrics::new(96, 100);
-        let fonts = Fonts::new(None, &m);
+        let fonts = Fonts::new(None, &m).unwrap();
         let pal = Palette::new(false, &ColorOverrides::default());
-        let mut p = Painter::new();
+        let mut p = Painter::new().unwrap();
         let mut view = sample_view();
         for n in [5, 1] {
             view.rows.truncate(n);
-            let layout = layout::compute(&view, &m, &GdiMeasure::new(&fonts));
+            let layout = layout::compute(&view, &m, &GdiMeasure::new(&fonts).unwrap());
             p.draw(&layout, &view, &pal, &fonts, &m, None, None, None, true)
                 .unwrap();
             assert_eq!(p.size(), (layout.window.w, layout.window.h));
@@ -669,10 +668,14 @@ mod tests {
             weight: 400,
         };
         let (small, big) = (
-            Fonts::new(Some(&spec(8)), &m),
-            Fonts::new(Some(&spec(16)), &m),
+            Fonts::new(Some(&spec(8)), &m).unwrap(),
+            Fonts::new(Some(&spec(16)), &m).unwrap(),
         );
-        let w = |f: &Fonts| GdiMeasure::new(f).width("Windows", TextStyle::Body);
+        let w = |f: &Fonts| {
+            GdiMeasure::new(f)
+                .unwrap()
+                .width("Windows", TextStyle::Body)
+        };
         assert!(w(&big) > w(&small) * 3 / 2);
     }
 
@@ -777,5 +780,19 @@ mod tests {
             }
         }
         std::fs::write(path, out).unwrap();
+    }
+
+    #[test]
+    fn border_mode_corner_alpha_never_exceeds_coverage() {
+        let s = render(&sample_view(), false, Some(0), false);
+        let (c, radius) = (s.layout.card, CARD_RADIUS as f32);
+        for y in c.y..c.y + CARD_RADIUS {
+            for x in c.x..c.x + CARD_RADIUS {
+                let cov = raster::rounded_rect_coverage(x as f32 + 0.5, y as f32 + 0.5, &c, radius);
+                let max_a = (cov * 255.0).round() as u32;
+                let a = s.painter.pixel(x, y) >> 24;
+                assert!(a <= max_a, "({x},{y}) alpha {a} > coverage {max_a}");
+            }
+        }
     }
 }
