@@ -36,7 +36,13 @@ to `%TEMP%\drivecap.log`.
   to hide it.
 - **Right-click** the tray icon (or the card) for Snooze, Volumes, Font,
   Edit config.json and Quit drivecap.
-- Drag the card to move it; it remembers where you put it.
+- Drag the card to move it; it remembers where you put it, per monitor.
+- Card header buttons: **Zz** snoozes every at-risk drive and hides the
+  card (click again to wake them), the half-filled circle sets idle
+  opacity, the gear opens settings (snooze length, font, config, quit),
+  and the chevron switches between all drives and warned drives only.
+- Each warning row has its own **Zz** to snooze just that drive. A new
+  level crossing, or a drive going dire, breaks through any snooze.
 
 `drivecap status` prints the watched volumes and their free space.
 

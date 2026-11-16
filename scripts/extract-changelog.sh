@@ -24,13 +24,21 @@ if [[ ! -f "$CHANGELOG" ]]; then
   exit 1
 fi
 
-# Escape regex metacharacters in the version for sed.
-VERSION_ESC="${VERSION//./\\.}"
-
-# Range from the version header to the next version header. `sed '1d;$d'`
-# strips the header line and the trailing next-version header so only the
-# body (### Added / ### Fixed / ...) is emitted.
-SECTION="$(sed -n "/^## \[${VERSION_ESC}\]/,/^## \[/p" "$CHANGELOG" | sed '1d;$d')"
+# Print the lines after the `## [VERSION]` header up to (not including) the
+# next `## [` heading or end of file, then trim surrounding blank lines.
+# Plain string prefix matching avoids regex-escaping the version, and fixes
+# the old `sed '1d;$d'` bug that dropped the last body line when the section
+# was the final one in the file.
+SECTION="$(awk -v hdr="## [${VERSION}]" '
+  index($0, hdr) == 1 { on = 1; next }
+  on && index($0, "## [") == 1 { exit }
+  on { lines[++n] = $0 }
+  END {
+    s = 1; while (s <= n && lines[s] ~ /^[ \t\r]*$/) s++
+    e = n; while (e >= s && lines[e] ~ /^[ \t\r]*$/) e--
+    for (i = s; i <= e; i++) print lines[i]
+  }
+' "$CHANGELOG")"
 
 if [[ -z "$SECTION" ]]; then
   echo "error: no CHANGELOG section found for version $VERSION" >&2

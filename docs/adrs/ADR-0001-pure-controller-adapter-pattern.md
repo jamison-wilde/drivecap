@@ -10,9 +10,7 @@ zones, level crossings, debounce re-arming, snooze break-through,
 reminder intervals, fade/hold/linger, click-through, hover. Written
 inline in a wndproc, those rules can only be tested by driving a real
 message pump with real timers and real disks — in practice, by manual
-smoke. Exbar learned this the hard way: its first wndproc mixed state
-transitions, capture and paint into one large match that could not be
-tested until it was split.
+smoke.
 
 ## Decision
 

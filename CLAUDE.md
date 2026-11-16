@@ -8,8 +8,6 @@ Orientation for AI coding tools working in this repo.
 
 ## Layout
 
-Modules marked *(planned)* land in later v1 tasks (`docs/superpowers/plans/2026-11-15-drivecap-v1.md`).
-
 ```
 drivecap/
 ├── Cargo.toml                          # workspace
@@ -26,18 +24,19 @@ drivecap/
 │       │   ├── error.rs                # DrivecapError + DrivecapResult
 │       │   ├── clock.rs                # Clock trait + SystemClock + MockClock (time-source seam)
 │       │   ├── paths.rs                # Filesystem layout (~/.drivecap/)
-│       │   ├── config.rs               # (planned) Config schema, defaults, load/save — ~/.drivecap/config.json
-│       │   ├── alerts.rs               # (planned) Pure alert engine: zones, levels, debounce, snooze, schedule
-│       │   ├── palette.rs              # (planned) Light/dark colour tokens
-│       │   ├── model.rs                # (planned) Pure surface view model (rows, bar fill, value text)
-│       │   ├── visibility.rs           # (planned) Pure fade / hold / linger / click-through state machine
-│       │   ├── layout.rs               # (planned) Pure card layout + hit testing
-│       │   ├── position.rs             # (planned) Position store + work-area clamping — ~/.drivecap/position.json
-│       │   ├── volumes.rs              # (planned) Volume enumeration + local free-space query (FFI)
-│       │   ├── net_probe.rs            # (planned) Network free-space probe worker (3 s budget)
-│       │   ├── controller.rs           # (planned) Pure app controller: events in, Effects out
-│       │   ├── raster.rs               # (planned) Pure raster helpers (premultiplied alpha, halo)
-│       │   ├── paint.rs                # (planned) GDI painter → UpdateLayeredWindow
+│       │   ├── config.rs               # Config schema, defaults, load/save — ~/.drivecap/config.json
+│       │   ├── alerts.rs               # Pure alert engine: zones, levels, debounce, snooze, schedule
+│       │   ├── palette.rs              # Light/dark colour tokens
+│       │   ├── model.rs                # Pure surface view model (rows, bar fill, value text)
+│       │   ├── visibility.rs           # Pure fade / hold / linger / click-through state machine
+│       │   ├── layout.rs               # Pure card layout + hit testing
+│       │   ├── position.rs             # Position store + work-area clamping — ~/.drivecap/position.json
+│       │   ├── volumes.rs              # Volume enumeration + local free-space query (FFI)
+│       │   ├── net_probe.rs            # Network free-space probe worker (3 s budget)
+│       │   ├── controller.rs           # Pure app controller: events in, Effects out
+│       │   ├── polling.rs              # Pure per-volume collection: scan reconcile, poll schedule, snooze
+│       │   ├── raster.rs               # Pure raster helpers (premultiplied alpha, halo)
+│       │   ├── paint.rs                # GDI painter → UpdateLayeredWindow (+ paint/fonts.rs, gdi.rs, glyphs.rs)
 │       │   ├── card_wnd/               # Card window: mod (wndproc, pump, state), effects (apply_effects), input (mouse/drag), placement (monitors, position.json), render (GDI resources, paint, show/hide), popups (popup open/place/input/dismissal), shell (tray, right-click menus, font dialog)
 │       │   ├── single_instance.rs      # Named-mutex guard + Drivecap.Show relaunch signal
 │       │   ├── tray.rs                 # Shell_NotifyIconW tray icon: runtime-drawn severity glyph, tooltip, v4 callbacks
