@@ -167,6 +167,9 @@ pub struct Controller {
     connected: Vec<(VolumeId, String)>,
     vis: Visibility,
     popup: Option<Popup>,
+    /// A tray click / relaunch shows the card expanded whatever the
+    /// configured mode, until the chevron is used or the card hides.
+    force_expanded: bool,
     last_rescan: u64,
     // Last state reported to the adapter, for change detection.
     last_view: SurfaceView,
@@ -187,6 +190,7 @@ impl Controller {
             connected: Vec::new(),
             vis: Visibility::new(),
             popup: None,
+            force_expanded: false,
             last_rescan: now,
             last_view: SurfaceView {
                 title: String::new(),
@@ -255,11 +259,7 @@ impl Controller {
                 alert: &v.alert,
             })
             .collect();
-        let mode = if self.vis.tray_forced() {
-            Mode::Expanded
-        } else {
-            self.cfg.mode
-        };
+        let mode = self.display_mode();
         build_view(
             &rows,
             mode,
@@ -383,7 +383,20 @@ impl Controller {
         self.show(reason, now);
     }
 
+    /// The mode the card is drawn in: forced expanded for a tray /
+    /// relaunch showing, else the configured mode.
+    fn display_mode(&self) -> Mode {
+        if self.force_expanded {
+            Mode::Expanded
+        } else {
+            self.cfg.mode
+        }
+    }
+
     fn show(&mut self, reason: ShowReason, now: u64) {
+        if reason == ShowReason::Tray {
+            self.force_expanded = true;
+        }
         self.vis.show(reason, now, &self.cfg.timings);
         self.vols.reminders_shown(&self.cfg.timings, now);
     }
@@ -428,10 +441,13 @@ impl Controller {
                 self.vols.snooze(&id, choice, now);
             }
             Command::ToggleMode => {
-                self.cfg.mode = match self.cfg.mode {
+                // Toggle what the user sees: a forced-expanded card
+                // minimizes on the first press.
+                self.cfg.mode = match self.display_mode() {
                     Mode::Expanded => Mode::Minimized,
                     Mode::Minimized => Mode::Expanded,
                 };
+                self.force_expanded = false;
                 fx.extend([Effect::SaveConfig, Effect::Relayout]);
             }
             Command::SetSnoozeChoice(choice) => {
@@ -517,6 +533,10 @@ impl Controller {
 
     /// Re-pins, then emits whatever the adapter must re-apply.
     fn finish(&mut self, now: u64, fx: &mut Vec<Effect>) {
+        if !self.vis.is_visible() {
+            // The forced-expanded showing is over; the next one forces again.
+            self.force_expanded = false;
+        }
         let pinned = self.vols.any_awake_dire(now);
         self.vis.set_pinned(pinned, now, &self.cfg.timings);
 
@@ -921,6 +941,58 @@ mod tests {
         assert!(!c.visibility().is_visible());
         assert_eq!(c.view(T0 + 10_000).mode, Mode::Minimized);
         assert!(fx.contains(&Effect::Relayout));
+    }
+
+    #[test]
+    fn chevron_on_tray_shown_card_minimizes_it() {
+        let mut c = ctl();
+        sample(&mut c, 50.0, T0);
+        c.handle(Input::TrayClick, T0 + 10);
+        assert_eq!(c.view(T0 + 10).mode, Mode::Expanded);
+        let fx = cmd(&mut c, Command::ToggleMode, T0 + 300);
+        assert_eq!(c.view(T0 + 300).mode, Mode::Minimized);
+        assert_eq!(c.config().mode, Mode::Minimized);
+        assert!(fx.contains(&Effect::SaveConfig) && fx.contains(&Effect::Relayout));
+        cmd(&mut c, Command::ToggleMode, T0 + 400);
+        assert_eq!(c.view(T0 + 400).mode, Mode::Expanded);
+        assert_eq!(c.config().mode, Mode::Expanded);
+    }
+
+    #[test]
+    fn chevron_on_tray_forced_minimized_config_keeps_expanded_as_shown() {
+        // Config minimized, tray forces expanded: the user sees expanded,
+        // so one press must minimize (not flip config to expanded).
+        let cfg = Config {
+            mode: Mode::Minimized,
+            ..Config::default()
+        };
+        let mut c = ctl_with(cfg, true);
+        sample(&mut c, 50.0, T0);
+        c.handle(Input::TrayClick, T0 + 10);
+        cmd(&mut c, Command::ToggleMode, T0 + 300);
+        assert_eq!(c.view(T0 + 300).mode, Mode::Minimized);
+        assert_eq!(c.config().mode, Mode::Minimized);
+    }
+
+    #[test]
+    fn force_expanded_clears_at_hidden_and_returns_on_next_tray_show() {
+        let cfg = Config {
+            mode: Mode::Minimized,
+            ..Config::default()
+        };
+        let mut c = ctl_with(cfg, true);
+        sample(&mut c, 50.0, T0);
+        c.handle(Input::TrayClick, T0 + 10);
+        cmd(&mut c, Command::ToggleMode, T0 + 300);
+        cmd(&mut c, Command::ToggleMode, T0 + 400);
+        assert_eq!(c.config().mode, Mode::Expanded);
+        cmd(&mut c, Command::ToggleMode, T0 + 500);
+        assert_eq!(c.config().mode, Mode::Minimized);
+        tick_through(&mut c, T0 + 500, T0 + 20_000);
+        assert!(!c.visibility().is_visible());
+        assert_eq!(c.view(T0 + 20_000).mode, Mode::Minimized);
+        c.handle(Input::TrayClick, T0 + 20_010);
+        assert_eq!(c.view(T0 + 20_010).mode, Mode::Expanded);
     }
 
     #[test]
