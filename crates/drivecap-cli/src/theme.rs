@@ -14,7 +14,7 @@
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::core::w;
+use windows::core::{PCWSTR, w};
 
 /// Scale a logical pixel value by the given DPI.
 /// 96 DPI = 100% scaling.
@@ -27,13 +27,27 @@ pub fn scale(logical_px: i32, dpi: u32) -> i32 {
 /// repaint. Returns true if apps are set to dark mode; any read failure
 /// is treated as light.
 pub fn read_dark_mode() -> bool {
+    read_dark_flag(w!("AppsUseLightTheme"))
+}
+
+/// Query the Windows (taskbar / notification area) theme, which can differ
+/// from the apps theme — the tray glyph is drawn for this one. Uncached;
+/// failure reads as light.
+pub fn read_taskbar_dark_mode() -> bool {
+    read_dark_flag(w!("SystemUsesLightTheme"))
+}
+
+/// `true` when the `Personalize` DWORD `value` reads 0 (dark).
+fn read_dark_flag(value: PCWSTR) -> bool {
     let mut data: u32 = 1; // default to light (1 = light)
     let mut size = std::mem::size_of::<u32>() as u32;
+    // SAFETY: static wide strings; `data`/`size` are valid out-pointers
+    // sized for the REG_DWORD the call is restricted to.
     let result = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
             w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("AppsUseLightTheme"),
+            value,
             RRF_RT_REG_DWORD,
             None,
             Some(&mut data as *mut u32 as *mut std::ffi::c_void),
@@ -43,7 +57,9 @@ pub fn read_dark_mode() -> bool {
     // data == 0 means dark mode; data == 1 means light mode
     let dark = result.is_ok() && data == 0;
     log::debug!(
-        "theme: AppsUseLightTheme registry read ok={} raw_value={} dark_mode={}",
+        "theme: {} registry read ok={} raw_value={} dark_mode={}",
+        // SAFETY: `value` is one of the static NUL-terminated names above.
+        unsafe { value.display() },
         result.is_ok(),
         data,
         dark
@@ -93,6 +109,7 @@ mod tests {
         // all succeed (uncached — each one re-reads the registry).
         let _ = read_dark_mode();
         let _ = read_dark_mode();
+        let _ = read_taskbar_dark_mode();
     }
 
     #[test]

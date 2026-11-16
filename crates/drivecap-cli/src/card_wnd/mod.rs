@@ -14,6 +14,8 @@
 //!   anchoring, `position.json`.
 //! - `render` — GDI resources, per-paint layout, draw + present, and
 //!   `ShowWindow` following the alpha.
+//! - `shell` — the tray icon: creation, refresh, `TaskbarCreated`,
+//!   callbacks.
 //!
 //! ## State ownership and re-entrancy
 //!
@@ -39,6 +41,7 @@ mod effects;
 mod input;
 mod placement;
 mod render;
+mod shell;
 
 use std::cell::RefCell;
 use std::panic::AssertUnwindSafe;
@@ -78,6 +81,7 @@ use crate::net_probe::{ProbeWorker, Win32FreeProbe};
 use crate::paint::{Fonts, Painter};
 use crate::palette::Palette;
 use crate::position::PositionStore;
+use crate::tray::Tray;
 use crate::volumes::{VolumeSource, Win32Volumes};
 use crate::{paths, theme, warn_on_err};
 
@@ -86,7 +90,7 @@ use crate::{paths, theme, warn_on_err};
 pub const CARD_CLASS: PCWSTR = w!("DrivecapCard");
 /// Posted by the probe worker after queueing a result.
 pub const WM_APP_PROBE_DONE: u32 = WM_APP + 1;
-/// Tray icon callback message (Task 13).
+/// Tray icon callback message.
 pub const WM_APP_TRAY: u32 = WM_APP + 2;
 /// Re-posted `WM_DPICHANGED`: rescale from the queue, never mid-move.
 const WM_APP_RESCALE: u32 = WM_APP + 3;
@@ -97,6 +101,8 @@ const TICK_MS: u32 = 1_000;
 
 /// Registered `Drivecap.Show` message id (0 until [`run`] registers it).
 static SHOW_MSG: AtomicU32 = AtomicU32::new(0);
+/// Registered `TaskbarCreated` message id (Explorer restarted).
+static TASKBAR_MSG: AtomicU32 = AtomicU32::new(0);
 
 /// Win32 calls deferred until the state borrow ends (see module docs).
 #[derive(Debug, PartialEq)]
@@ -153,8 +159,8 @@ pub struct AppState {
     /// Hit under the last `WM_LBUTTONDOWN`, until its button-up.
     press: Option<Hit>,
     drag: Option<DragStart>,
-    /// Tray icon — Task 13 replaces the placeholder with its `Tray`.
-    tray: Option<()>,
+    /// Notification-area icon; `None` until created (or if it failed).
+    tray: Option<Tray>,
     deferred: Vec<WinOp>,
 }
 
@@ -263,11 +269,17 @@ fn create_and_pump() -> DrivecapResult<()> {
     if unsafe { RegisterClassExW(&class) } == 0 {
         return Err(windows::core::Error::from_win32().into());
     }
-    // SAFETY: static wide string.
-    SHOW_MSG.store(
-        unsafe { RegisterWindowMessageW(w!("Drivecap.Show")) },
-        Ordering::Relaxed,
-    );
+    // SAFETY: static wide strings.
+    unsafe {
+        SHOW_MSG.store(
+            RegisterWindowMessageW(w!("Drivecap.Show")),
+            Ordering::Relaxed,
+        );
+        TASKBAR_MSG.store(
+            RegisterWindowMessageW(w!("TaskbarCreated")),
+            Ordering::Relaxed,
+        );
+    }
     // SAFETY: registered class; WM_CREATE builds the state.
     let hwnd = unsafe {
         CreateWindowExW(
@@ -440,7 +452,9 @@ fn on_message(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             return handled;
         }
         WM_APP_RESCALE | WM_DISPLAYCHANGE => {
-            with_state(hwnd, |st| apply_effects(hwnd, st, vec![Effect::Relayout]));
+            with_state(hwnd, |st| {
+                apply_effects(hwnd, st, vec![Effect::Relayout, Effect::UpdateTray]);
+            });
             return handled;
         }
         WM_SETTINGCHANGE => {
@@ -457,6 +471,14 @@ fn on_message(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
         WM_LBUTTONDOWN | WM_LBUTTONUP | WM_MOUSEMOVE | WM_CAPTURECHANGED | WM_RBUTTONUP => {
             on_mouse(hwnd, msg, lparam_point(lp));
+            return handled;
+        }
+        WM_APP_TRAY => {
+            shell::on_tray(hwnd, wp, lp);
+            return handled;
+        }
+        m if m != 0 && m == TASKBAR_MSG.load(Ordering::Relaxed) => {
+            with_state(hwnd, shell::readd_tray);
             return handled;
         }
         m if m != 0 && m == SHOW_MSG.load(Ordering::Relaxed) => {

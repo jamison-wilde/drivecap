@@ -15,7 +15,7 @@ use windows_core::{HSTRING, PCWSTR, w};
 
 use super::{
     AppState, TICK_MS, TIMER_ANIM, TIMER_TICK, WinOp, anim_interval, exstyle_for, placement,
-    repaint, sync_shown,
+    repaint, shell, sync_shown,
 };
 use crate::config::Config;
 use crate::controller::{AnimRate, Effect, Input};
@@ -52,7 +52,7 @@ pub fn apply_effects(hwnd: HWND, st: &mut AppState, effects: Vec<Effect>) {
                 unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle_for(on).0 as isize) };
             }
             Effect::SetAnim(rate) => set_anim(hwnd, rate),
-            Effect::UpdateTray => update_tray(st),
+            Effect::UpdateTray => shell::update_tray(st),
             Effect::SaveConfig => save_config(st),
             Effect::OpenConfig => st.deferred.push(WinOp::OpenConfig(paths::config_path())),
             Effect::ShowFontDialog => log::debug!("font dialog: not built yet (Task 14)"),
@@ -81,9 +81,10 @@ pub(super) fn send(hwnd: HWND, st: &mut AppState, input: Input) {
     apply_effects(hwnd, st, fx);
 }
 
-/// After the window exists: the 1 s tick, the first scan and the first
-/// poll round.
+/// After the window exists: the tray icon, the 1 s tick, the first scan
+/// and the first poll round.
 pub(super) fn start(hwnd: HWND, st: &mut AppState) {
+    shell::create_tray(hwnd, st);
     // SAFETY: our own window; WM_TIMER, no callback.
     if unsafe { SetTimer(Some(hwnd), TIMER_TICK, TICK_MS, None) } == 0 {
         log::error!("card: SetTimer(tick) failed; nothing will poll");
@@ -117,10 +118,11 @@ fn probe_samples(st: &mut AppState) -> Vec<Effect> {
     fx
 }
 
-/// `WM_CLOSE` / `Effect::Quit`: save `position.json`, then destroy the
-/// window (deferred; `WM_DESTROY` posts `WM_QUIT`).
+/// `WM_CLOSE` / `Effect::Quit`: save `position.json`, remove the tray
+/// icon, then destroy the window (deferred; `WM_DESTROY` posts `WM_QUIT`).
 pub(super) fn quit(st: &mut AppState) {
     log::info!("quitting");
+    st.tray = None;
     placement::save_positions(&st.positions);
     st.deferred.push(WinOp::Destroy);
 }
@@ -163,13 +165,6 @@ fn set_anim(hwnd: HWND, rate: AnimRate) {
         None => unsafe {
             let _ = KillTimer(Some(hwnd), TIMER_ANIM);
         },
-    }
-}
-
-/// Tray hook — Task 13 refreshes the tray icon from `ctl.tray_state`.
-fn update_tray(st: &mut AppState) {
-    if st.tray.is_none() {
-        log::trace!("tray update: no tray yet (Task 13)");
     }
 }
 

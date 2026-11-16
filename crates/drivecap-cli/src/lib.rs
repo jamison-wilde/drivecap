@@ -46,9 +46,11 @@
 //!   pump and [`card_wnd::apply_effects`].
 //! - [`single_instance`] — named-mutex guard and the `Drivecap.Show`
 //!   relaunch signal.
+//! - [`tray`] — notification-area icon: runtime-drawn severity glyph,
+//!   tooltip, version-4 callbacks.
 //!
-//! The remaining pure core (menu) and Win32 adapters (tray, popups) land
-//! in later tasks; `CLAUDE.md` lists the planned set.
+//! The remaining pure core (menu) and Win32 adapters (popups, menus,
+//! font picker) land in later tasks; `CLAUDE.md` lists the planned set.
 //!
 //! ## Where to read next
 //!
@@ -74,5 +76,6 @@ pub mod position;
 pub mod raster;
 pub mod single_instance;
 pub mod theme;
+pub mod tray;
 pub mod visibility;
 pub mod volumes;
