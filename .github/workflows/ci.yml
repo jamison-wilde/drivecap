@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+# One run per ref (tag or PR). Main pushes don't trigger CI anymore —
+# feature work flows through PRs (which run lint/test/doc-check) and
+# releases flow through tags (which also build the MSI + create the
+# GitHub Release). Keeps CI minutes spent only on meaningful events.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  lint:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets
+
+  doc-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps --workspace
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  build-msi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [lint, test, doc-check]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p drivecap-cli
+      - run: dotnet tool install --global wix
+      - run: wix eula accept wix7
+      - run: wix extension add --global WixToolset.Util.wixext WixToolset.UI.wixext
+      - name: Build MSI
+        run: bash ./scripts/build-msi.sh
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivecap-msi
+          path: target/wix/drivecap-*.msi
+      - name: Extract release notes from CHANGELOG
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash ./scripts/extract-changelog.sh "$VERSION" > release_notes.md
+          echo "--- release_notes.md ---"
+          cat release_notes.md
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/wix/drivecap-*.msi
+          body_path: release_notes.md

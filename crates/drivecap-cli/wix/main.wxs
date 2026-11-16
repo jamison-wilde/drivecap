@@ -1,0 +1,154 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!--
+  Drivecap MSI installer.
+  Build with: ./scripts/build-msi.sh, which runs
+    wix build -arch x64 -d Version=0.1.0 -d CargoTargetBinDir=target/release \
+      crates/drivecap-cli/wix/main.wxs -o target/wix/drivecap-0.1.0-x64.msi \
+      -ext WixToolset.Util.wixext -ext WixToolset.UI.wixext
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+    <!-- UpgradeCode is fixed forever: changing it makes new versions
+         install side-by-side instead of replacing the old one. It is
+         drivecap's own — never copied from a sibling product, or one
+         product's installer would treat the other as a related product
+         and remove it. -->
+    <Package
+        Name="Drivecap"
+        Version="$(Version)"
+        Manufacturer="Drivecap"
+        UpgradeCode="F04B1403-DE21-41D0-9AB5-3C30AA482CAD"
+        Language="1033"
+        Compressed="yes"
+        Scope="perUser"
+        InstallerVersion="500">
+
+        <SummaryInformation Description="Drivecap — always-on-top disk-space warner for Windows" />
+
+        <!-- AllowSameVersionUpgrades is REQUIRED, not cosmetic. WiX
+             auto-generates a fresh ProductCode on every build, and the
+             default MajorUpgrade only detects related products with a
+             STRICTLY LOWER version. Reinstalling the same version (the
+             normal dev/rebuild loop) would therefore match nothing, skip
+             RemoveExistingProducts, and install side-by-side — one extra
+             "Drivecap" row in Settings → Apps per build. With this flag
+             the current version is inside the detected range, so every
+             reinstall replaces its predecessors. -->
+        <MajorUpgrade
+            AllowSameVersionUpgrades="yes"
+            Schedule="afterInstallInitialize"
+            DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit." />
+
+        <MediaTemplate EmbedCab="yes" />
+
+        <!-- Force file replacement on every install, even when version
+             numbers match. Without this, Windows Installer's default
+             version-comparison logic sees drivecap.exe at the same 0.x.y
+             version and skips the file copy, leaving an old binary in
+             place across rebuilds. 'amus' = ignore Age/Date/Size, Must
+             reinstall, Update side-by-side files, Shortcuts refreshed. -->
+        <Property Id="REINSTALLMODE" Value="amus" />
+
+        <!-- Shut down any running drivecap.exe before replacing files -->
+        <util:CloseApplication Id="CloseDrivecap"
+                               Target="drivecap.exe"
+                               CloseMessage="yes"
+                               TerminateProcess="500"
+                               RebootPrompt="no" />
+
+        <Feature Id="Main" Title="Drivecap" Level="1">
+            <ComponentRef Id="DrivecapExe" />
+            <ComponentRef Id="RunKey" />
+            <ComponentRef Id="StartMenuShortcut" />
+        </Feature>
+
+        <!-- Uninstall metadata — shown in Settings → Apps.
+             Windows Installer writes the ARP row itself, under
+             HKCU\...\Uninstall\{ProductCode}, sourcing DisplayName from
+             Package/@Name, DisplayVersion from @Version and Publisher
+             from @Manufacturer. Don't hand-roll an Uninstall\Drivecap
+             registry component: a fixed-name key duplicates that row and
+             outlives the ProductCode it points at. These properties
+             supply the only fields the automatic row misses.
+             ARPNOMODIFY is not set here — WixUI_Minimal already declares it. -->
+        <Property Id="ARPNOREPAIR" Value="1" />
+        <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLDIR]" After="CostFinalize" />
+
+        <!-- UI: WixUI_Minimal = Welcome/License → Finish. Finish dialog has
+             a "Launch Drivecap now" checkbox wired to WixShellExec.
+             ShellExecute does NOT inherit msiexec's STARTUPINFO / console
+             pipe, so Windows Terminal doesn't claim a phantom tab the way
+             an ExeCommand-type deferred CustomAction would. -->
+        <ui:WixUI Id="WixUI_Minimal" />
+        <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch Drivecap now" />
+        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+
+        <!-- ShellExecute target — [#FileId] resolves to installed exe path.
+             WixShellExec passes no arguments, so the CLI treats no-args as
+             the `run` subcommand (see src/bin/drivecap.rs). -->
+        <Property Id="WixShellExecTarget" Value="[#DrivecapExeFile]" />
+
+        <CustomAction Id="LaunchApplication"
+                      BinaryRef="Wix4UtilCA_X64"
+                      DllEntry="WixShellExec"
+                      Impersonate="yes"
+                      Execute="immediate"
+                      Return="check" />
+
+        <UI>
+            <Publish Dialog="ExitDialog"
+                     Control="Finish"
+                     Event="DoAction"
+                     Value="LaunchApplication"
+                     Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+        </UI>
+
+        <StandardDirectory Id="LocalAppDataFolder">
+            <Directory Id="INSTALLDIR" Name="Drivecap" />
+        </StandardDirectory>
+
+        <!-- Start Menu shortcut so users can re-launch drivecap after
+             quitting it (a re-launch while running signals the running
+             instance to show its card, then exits). -->
+        <StandardDirectory Id="ProgramMenuFolder" />
+
+        <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder" Guid="*" Bitness="always64">
+            <Shortcut Id="DrivecapShortcut"
+                      Name="Drivecap"
+                      Description="Always-on-top disk-space warner"
+                      Target="[INSTALLDIR]drivecap.exe"
+                      Arguments="run"
+                      WorkingDirectory="INSTALLDIR" />
+            <RegistryValue
+                Root="HKCU"
+                Key="Software\Drivecap"
+                Name="ShortcutInstalled"
+                Type="integer"
+                Value="1"
+                KeyPath="yes" />
+        </Component>
+
+        <!-- drivecap.exe component -->
+        <Component Id="DrivecapExe" Directory="INSTALLDIR" Guid="*" Bitness="always64">
+            <File Id="DrivecapExeFile"
+                  Source="$(CargoTargetBinDir)\drivecap.exe"
+                  KeyPath="yes" />
+        </Component>
+
+        <!-- Run key: auto-start drivecap at login -->
+        <Component Id="RunKey" Directory="INSTALLDIR" Guid="*" Bitness="always64">
+            <RegistryValue
+                Root="HKCU"
+                Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                Name="Drivecap"
+                Type="string"
+                Value="&quot;[INSTALLDIR]drivecap.exe&quot; run"
+                KeyPath="yes" />
+        </Component>
+
+    </Package>
+</Wix>
