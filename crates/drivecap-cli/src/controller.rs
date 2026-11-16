@@ -112,8 +112,11 @@ pub enum AnimRate {
     Off,
     /// 50 ms: visible, nothing ramping.
     Slow50,
-    /// 16 ms: an alpha ramp or the dire halo is animating.
+    /// 16 ms: an alpha ramp is animating.
     Fast16,
+    /// 33 ms (~30 fps): only the dire halo / border pulse animates. The
+    /// adapter skips frames during the halo rest phase.
+    Halo33,
 }
 
 /// Work for the adapter.
@@ -579,8 +582,10 @@ impl Controller {
     }
 
     fn anim_rate(&self, now: u64) -> AnimRate {
-        if self.vis.needs_fast_anim(now, &self.cfg.timings) || self.last_view.halo {
+        if self.vis.needs_fast_anim(now, &self.cfg.timings) {
             AnimRate::Fast16
+        } else if self.last_view.halo {
+            AnimRate::Halo33
         } else if self.vis.is_visible() || self.popup.is_some() {
             AnimRate::Slow50
         } else {
@@ -1280,5 +1285,18 @@ mod tests {
         let fx = sample(&mut c, 1.0, T0);
         assert!(!fx.iter().any(|e| matches!(e, Effect::SetClickThrough(_))));
         assert!(!fx.contains(&Effect::UpdateTray));
+    }
+
+    #[test]
+    fn dire_halo_animates_at_33ms_once_the_fade_in_ends() {
+        let mut c = ctl();
+        let fx = sample(&mut c, 1.0, T0);
+        assert!(
+            fx.contains(&Effect::SetAnim(AnimRate::Fast16)),
+            "fade-in ramp"
+        );
+        let fx = tick_through(&mut c, T0, T0 + 1_000);
+        assert!(fx.contains(&Effect::SetAnim(AnimRate::Halo33)));
+        assert_eq!(c.anim_rate(T0 + 1_000), AnimRate::Halo33);
     }
 }

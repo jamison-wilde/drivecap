@@ -10,10 +10,8 @@ use crate::layout::{self, CardLayout, HeaderButton, Metrics};
 use crate::model::SurfaceView;
 use crate::paint::{Fonts, GdiMeasure};
 use crate::palette::Palette;
+use crate::raster::{HALO_ACTIVE_MS, HALO_PERIOD_MS};
 use crate::{theme, warn_on_err};
-
-/// Dire halo / pulse period.
-const HALO_PERIOD_MS: u64 = 2_400;
 
 /// Header button drawn as active: the open popup's button, else the
 /// header Zz while every at-risk volume is snoozed.
@@ -34,6 +32,23 @@ fn halo_phase(epoch: &mut Option<u64>, halo: bool, now: u64) -> Option<u64> {
     }
     let start = *epoch.get_or_insert(now);
     Some(now.saturating_sub(start) % HALO_PERIOD_MS)
+}
+
+/// The halo phase at `now` for a running epoch, without starting one.
+pub(super) fn peek_halo_phase(epoch: Option<u64>, now: u64) -> Option<u64> {
+    epoch.map(|start| now.saturating_sub(start) % HALO_PERIOD_MS)
+}
+
+/// Whether an anim frame must repaint for the halo: always for the border
+/// pulse (`halo_mode` false; it never rests), and for the halo ring while
+/// it travels plus one frame into the rest phase to clear the last ring
+/// (`painted` = phase of the last repaint). The rest of the 1700–2400 ms
+/// rest phase paints nothing.
+pub(super) fn halo_frame_due(phase: Option<u64>, painted: Option<u64>, halo_mode: bool) -> bool {
+    let Some(p) = phase else {
+        return false;
+    };
+    !halo_mode || p < HALO_ACTIVE_MS || painted.is_some_and(|q| q < HALO_ACTIVE_MS)
 }
 
 /// Rebuilds metrics and fonts when the DPI, scale or font changed, and the
@@ -87,6 +102,7 @@ pub(super) fn repaint(hwnd: HWND, st: &mut AppState) {
     st.hover = input::hover_for(st.cursor, &layout, interactive);
     let active = active_button(st.ctl.popup(), view.snooze_all_active);
     let halo = halo_phase(&mut st.halo_epoch, view.halo, now);
+    st.halo_painted = halo;
     let drawn = st.painter.draw(
         &layout,
         &view,
@@ -159,5 +175,31 @@ mod tests {
         assert_eq!(halo_phase(&mut epoch, false, 5_000), None);
         assert_eq!(epoch, None);
         assert_eq!(halo_phase(&mut epoch, true, 7_000), Some(0));
+    }
+
+    #[test]
+    fn halo_frames_run_through_the_ring_phase() {
+        assert!(halo_frame_due(Some(0), None, true));
+        assert!(halo_frame_due(Some(1_699), Some(1_660), true));
+    }
+
+    #[test]
+    fn halo_rest_phase_gets_one_clearing_frame_then_none() {
+        assert!(
+            halo_frame_due(Some(1_710), Some(1_690), true),
+            "clear the last ring"
+        );
+        assert!(!halo_frame_due(Some(1_750), Some(1_710), true));
+        assert!(!halo_frame_due(Some(2_399), Some(2_360), true));
+    }
+
+    #[test]
+    fn border_pulse_has_no_rest_phase() {
+        assert!(halo_frame_due(Some(2_000), Some(1_960), false));
+    }
+
+    #[test]
+    fn no_halo_no_frames() {
+        assert!(!halo_frame_due(None, Some(100), true));
     }
 }

@@ -74,7 +74,9 @@ use windows_core::{PCWSTR, w};
 
 pub use effects::apply_effects;
 pub(crate) use popups::popup_mouse;
-use render::{compute_layout, refresh_resources, repaint, sync_shown};
+use render::{
+    compute_layout, halo_frame_due, peek_halo_phase, refresh_resources, repaint, sync_shown,
+};
 
 use crate::clock::{Clock, SystemClock};
 use crate::config::{Config, FontSpec};
@@ -160,6 +162,8 @@ pub struct AppState {
     cursor: Option<(i32, i32)>,
     hover: Option<Hit>,
     halo_epoch: Option<u64>,
+    /// Halo phase drawn by the last repaint (see `render::halo_frame_due`).
+    halo_painted: Option<u64>,
     /// `ShowWindow` state as we last set it.
     shown: bool,
     /// Hit under the last `WM_LBUTTONDOWN`, until its button-up.
@@ -225,6 +229,7 @@ impl AppState {
             cursor: None,
             hover: None,
             halo_epoch: None,
+            halo_painted: None,
             shown: false,
             press: None,
             drag: None,
@@ -588,7 +593,8 @@ fn on_anim(hwnd: HWND, st: &mut AppState) {
         .layout
         .as_ref()
         .and_then(|l| input::hover_for(st.cursor, l, interactive));
-    if hover != st.hover || st.halo_epoch.is_some() {
+    let phase = peek_halo_phase(st.halo_epoch, st.clock.now_unix_ms());
+    if hover != st.hover || halo_frame_due(phase, st.halo_painted, st.ctl.config().dire_halo) {
         fx.push(Effect::Redraw);
     }
     fx.extend(popups::poll(st));
@@ -601,6 +607,7 @@ fn anim_interval(rate: AnimRate) -> Option<u32> {
         AnimRate::Off => None,
         AnimRate::Slow50 => Some(50),
         AnimRate::Fast16 => Some(16),
+        AnimRate::Halo33 => Some(33),
     }
 }
 
@@ -639,5 +646,6 @@ mod tests {
         assert_eq!(anim_interval(AnimRate::Off), None);
         assert_eq!(anim_interval(AnimRate::Slow50), Some(50));
         assert_eq!(anim_interval(AnimRate::Fast16), Some(16));
+        assert_eq!(anim_interval(AnimRate::Halo33), Some(33));
     }
 }
