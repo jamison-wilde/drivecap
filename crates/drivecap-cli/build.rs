@@ -30,11 +30,13 @@ fn main() {
             .set("OriginalFilename", "drivecap.exe")
             .set("FileVersion", env!("CARGO_PKG_VERSION"))
             .set("ProductVersion", env!("CARGO_PKG_VERSION"))
-            .set_manifest(MANIFEST);
+            .set_manifest(MANIFEST)
+            // Regenerate with `node scripts/app-icon.mjs`.
+            .set_icon("assets/drivecap.ico");
         // A silent failure would ship an exe without the DPI manifest
-        // (blurry, mis-sized card) or version info; fail the build instead.
+        // (blurry, mis-sized card), version info or icon; fail the build instead.
         if let Err(e) = res.compile() {
-            panic!("winres: resource compile failed (manifest + version info): {e}");
+            panic!("winres: resource compile failed (manifest + version info + icon): {e}");
         }
     }
 }

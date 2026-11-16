@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/icon.png" width="96" alt=""></p>
+
 # Drivecap
 
 **Know a drive is filling up *before* your build fails.**
