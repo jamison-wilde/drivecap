@@ -182,7 +182,7 @@ pub fn compute(view: &SurfaceView, m: &Metrics, tm: &dyn TextMeasure) -> CardLay
     });
 
     let title_x = dot.right() + m.px(HEADER_GAP);
-    let title_room = (buttons[0].1.x - title_x).max(0);
+    let title_room = (buttons[0].1.x - m.px(HEADER_GAP) - title_x).max(0);
     let title_w = tm
         .width(&view.title, TextStyle::BodySemibold)
         .min(title_room);
@@ -500,7 +500,7 @@ mod tests {
         let mut v = three_rows();
         v.title = "x".repeat(200);
         let l = lay(&v, 100);
-        assert_eq!(l.title.right(), btn(&l, HeaderButton::SnoozeAll).x);
+        assert_eq!(l.title.right() + 6, btn(&l, HeaderButton::SnoozeAll).x);
     }
 
     #[test]

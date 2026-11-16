@@ -121,6 +121,9 @@ pub struct Visibility {
     dragging: bool,
     tray_forced: bool,
     preview_opacity: Option<u8>,
+    /// Set by [`Visibility::hide`]: ignore hover until the cursor leaves
+    /// (or the next show), so a cursor resting on the card can't undo it.
+    needs_leave: bool,
     /// Durations from the latest [`Timings`] seen, for the calls that take none.
     fade_in_ms: u64,
     fade_out_ms: u64,
@@ -149,6 +152,7 @@ impl Visibility {
             dragging: false,
             tray_forced: false,
             preview_opacity: None,
+            needs_leave: false,
             fade_in_ms: t.fade_in_ms,
             fade_out_ms: t.fade_out_ms,
         }
@@ -158,6 +162,7 @@ impl Visibility {
     /// clicks, `hold_ms` otherwise; it extends, never shortens, an active hold.
     pub fn show(&mut self, r: ShowReason, now: u64, t: &Timings) {
         self.capture(t);
+        self.needs_leave = false;
         if r == ShowReason::Tray {
             self.tray_forced = true;
         }
@@ -190,6 +195,7 @@ impl Visibility {
         self.hovered = false;
         self.hover_since = None;
         self.dragging = false;
+        self.needs_leave = true;
         self.begin_fade_out(now);
     }
 
@@ -223,13 +229,14 @@ impl Visibility {
         self.capture(t);
         if !inside {
             self.hover_since = None;
+            self.needs_leave = false;
             if self.hovered {
                 self.hovered = false;
                 self.release(now, t);
             }
             return;
         }
-        if !self.is_visible() {
+        if !self.is_visible() || self.needs_leave {
             self.hover_since = None;
             return;
         }
@@ -319,9 +326,23 @@ impl Visibility {
         self.tray_forced
     }
 
-    /// Opacity-popup live preview (percent), or `None` to use the config value.
-    pub fn set_preview_opacity(&mut self, v: Option<u8>) {
+    /// Opacity-popup live preview (percent), or `None` to end it. While
+    /// set, the card shows the preview level even when hovered (pinned
+    /// keeps 255) and never lingers or fades out. Ending it resumes the
+    /// normal rules: full alpha if still hovered, else the linger.
+    pub fn set_preview_opacity(&mut self, v: Option<u8>, now: u64, t: &Timings) {
+        self.capture(t);
+        let was = self.preview_opacity.is_some();
         self.preview_opacity = v;
+        if !self.is_visible() {
+            return;
+        }
+        if v.is_some() {
+            self.grab(now);
+        } else if was {
+            self.release(now, t);
+            self.fade_toward_target(now);
+        }
     }
 
     fn capture(&mut self, t: &Timings) {
@@ -329,12 +350,18 @@ impl Visibility {
         self.fade_out_ms = t.fade_out_ms;
     }
 
+    /// Something keeps the card from lingering or fading out.
     fn held(&self) -> bool {
-        self.hovered || self.dragging || self.pinned
+        self.hovered || self.dragging || self.pinned || self.preview_opacity.is_some()
     }
 
+    /// Pinned beats the preview; the preview beats hover, drag and tray.
     fn target(&self) -> Mix {
-        if self.held() || self.tray_forced {
+        if self.pinned {
+            Mix::FULL
+        } else if self.preview_opacity.is_some() {
+            Mix::IDLE
+        } else if self.hovered || self.dragging || self.tray_forced {
             Mix::FULL
         } else {
             Mix::IDLE
@@ -593,10 +620,86 @@ mod tests {
     fn preview_opacity_overrides_idle() {
         let mut v = shown(ShowReason::Reminder);
         assert_eq!(at(&mut v, 200).1, 127);
-        v.set_preview_opacity(Some(80));
+        v.set_preview_opacity(Some(80), 200, &t());
         assert_eq!(v.alpha(200, &t(), IDLE), 204);
-        v.set_preview_opacity(None);
+        v.set_preview_opacity(None, 200, &t());
         assert_eq!(v.alpha(200, &t(), IDLE), 127);
+    }
+
+    #[test]
+    fn preview_shows_through_hover() {
+        let mut v = shown(ShowReason::Reminder);
+        hover(&mut v, 300); // full alpha by 650
+        assert_eq!(at(&mut v, 1000).1, 255);
+        v.set_preview_opacity(Some(30), 1000, &t());
+        assert_eq!(at(&mut v, 1200), (Phase::Holding, 76));
+        v.set_preview_opacity(Some(90), 1300, &t());
+        assert_eq!(v.alpha(1300, &t(), IDLE), 229);
+    }
+
+    #[test]
+    fn pinned_keeps_full_alpha_during_preview() {
+        let mut v = Visibility::new();
+        v.set_pinned(true, 0, &t());
+        v.set_preview_opacity(Some(30), 0, &t());
+        assert_eq!(at(&mut v, 500).1, 255);
+    }
+
+    #[test]
+    fn no_fade_out_while_preview_set() {
+        let mut v = shown(ShowReason::Reminder);
+        hover(&mut v, 300);
+        v.set_preview_opacity(Some(40), 1000, &t());
+        v.cursor(false, 2000, &t());
+        assert_eq!(at(&mut v, 60_000), (Phase::Holding, 102));
+    }
+
+    #[test]
+    fn clearing_preview_outside_lingers() {
+        let mut v = shown(ShowReason::Reminder);
+        hover(&mut v, 300);
+        v.set_preview_opacity(Some(40), 1000, &t());
+        v.cursor(false, 2000, &t());
+        v.set_preview_opacity(None, 10_000, &t());
+        assert_eq!(v.phase(), Phase::Lingering);
+        assert_eq!(at(&mut v, 12_999).0, Phase::Lingering);
+        assert_eq!(at(&mut v, 13_000).0, Phase::FadingOut);
+    }
+
+    #[test]
+    fn clearing_preview_while_hovered_returns_to_full() {
+        let mut v = shown(ShowReason::Reminder);
+        hover(&mut v, 300);
+        v.set_preview_opacity(Some(40), 1000, &t());
+        v.set_preview_opacity(None, 2000, &t());
+        assert_eq!(at(&mut v, 2200), (Phase::Holding, 255));
+    }
+
+    #[test]
+    fn hide_not_undone_until_cursor_leaves() {
+        let mut v = shown(ShowReason::Reminder);
+        hover(&mut v, 300);
+        v.hide(1000);
+        hover(&mut v, 1000);
+        assert_eq!(v.phase(), Phase::FadingOut);
+        assert_eq!(at(&mut v, 1600).0, Phase::Hidden);
+    }
+
+    #[test]
+    fn hover_rearms_after_leave_or_show() {
+        let mut v = shown(ShowReason::Reminder);
+        hover(&mut v, 300);
+        v.hide(1000);
+        v.cursor(false, 1100, &t());
+        hover(&mut v, 1200);
+        assert!(!v.click_through(), "re-armed by leaving");
+
+        let mut v = shown(ShowReason::Reminder);
+        hover(&mut v, 300);
+        v.hide(1000);
+        v.show(ShowReason::Crossing, 1100, &t());
+        hover(&mut v, 1200);
+        assert!(!v.click_through(), "re-armed by a new show");
     }
 
     #[test]

@@ -86,7 +86,7 @@ impl PositionStore {
         };
         let r = area.rect;
         let (x, y) = match self.per_monitor.get(&area.monitor) {
-            Some(&(dx, dy)) => (r.x + dx, r.y + dy),
+            Some(&(dx, dy)) => (r.x.saturating_add(dx), r.y.saturating_add(dy)),
             None => (r.right() - inset - card_w, r.bottom() - inset - card_h),
         };
         clamp_to_work_area(x, y, card_w, card_h, r)
@@ -226,6 +226,23 @@ mod tests {
         s.record(100, 100, 270, 145, &[primary(), second()]);
         s.record(2100, 50, 270, 145, &[primary(), second()]);
         assert_eq!(s.resolve(270, 145, &[primary()], 12), (100, 100));
+    }
+
+    #[test]
+    fn extreme_hand_edited_offset_saturates_then_clamps() {
+        let s = PositionStore::from_json_str(
+            r#"{"lastMonitor":"\\\\.\\DISPLAY2","perMonitor":{"\\\\.\\DISPLAY2":[2147483647,2147483647]}}"#,
+        )
+        .unwrap();
+        let below = WorkArea {
+            rect: Rect::new(1920, 10, 1920, 1040),
+            ..second()
+        };
+        // 1920 + i32::MAX would overflow (debug panic / release wrap).
+        assert_eq!(
+            s.resolve(270, 145, &[below], 12),
+            (1920 + 1920 - 270, 10 + 1040 - 145)
+        );
     }
 
     #[test]
