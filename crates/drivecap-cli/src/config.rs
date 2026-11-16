@@ -459,6 +459,9 @@ impl Config {
         self.idle_opacity_pct = pct.clamp(20, 100) as u8;
         self.scale_pct = self.scale_pct.clamp(50, 300);
         self.timings.clamp();
+        if let Some(font) = &mut self.font {
+            font.point_size = font.point_size.clamp(6, 72);
+        }
         if !self.defaults.is_valid() {
             log::warn!(
                 "config: invalid defaults {:?}; using 20/5/2 GB",
@@ -769,5 +772,15 @@ mod tests {
             c.rule_for(&id("BAD")),
             Config::default().rule_for(&id("none"))
         );
+    }
+
+    #[test]
+    fn font_point_size_clamps_to_6_through_72() {
+        let c = Config::from_json_str(r#"{"font":{"pointSize":0}}"#).unwrap();
+        assert_eq!(c.font.unwrap().point_size, 6);
+        let c = Config::from_json_str(r#"{"font":{"pointSize":5000}}"#).unwrap();
+        assert_eq!(c.font.unwrap().point_size, 72);
+        let c = Config::from_json_str(r#"{"font":{"pointSize":11}}"#).unwrap();
+        assert_eq!(c.font.unwrap().point_size, 11);
     }
 }

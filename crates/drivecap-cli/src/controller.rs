@@ -241,7 +241,8 @@ impl Controller {
                 self.cfg = cfg;
                 self.writable = true;
                 self.vols.apply_rules(&self.cfg, now);
-                fx.extend([Effect::Rescan, Effect::Relayout]);
+                // UpdateTray: colour overrides may have changed the glyph.
+                fx.extend([Effect::Rescan, Effect::Relayout, Effect::UpdateTray]);
             }
             Input::Cmd(cmd) => self.command(cmd, now, &mut fx),
         }
@@ -1298,5 +1299,16 @@ mod tests {
         let fx = tick_through(&mut c, T0, T0 + 1_000);
         assert!(fx.contains(&Effect::SetAnim(AnimRate::Halo33)));
         assert_eq!(c.anim_rate(T0 + 1_000), AnimRate::Halo33);
+    }
+
+    #[test]
+    fn config_reload_refreshes_the_tray() {
+        let mut c = ctl();
+        sample(&mut c, 50.0, T0);
+        let fx = c.handle(Input::ConfigReloaded(Config::default()), T0 + 10);
+        assert!(
+            fx.contains(&Effect::UpdateTray),
+            "colour overrides may have changed"
+        );
     }
 }

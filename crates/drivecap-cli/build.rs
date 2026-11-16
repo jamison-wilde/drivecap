@@ -31,6 +31,10 @@ fn main() {
             .set("FileVersion", env!("CARGO_PKG_VERSION"))
             .set("ProductVersion", env!("CARGO_PKG_VERSION"))
             .set_manifest(MANIFEST);
-        let _ = res.compile();
+        // A silent failure would ship an exe without the DPI manifest
+        // (blurry, mis-sized card) or version info; fail the build instead.
+        if let Err(e) = res.compile() {
+            panic!("winres: resource compile failed (manifest + version info): {e}");
+        }
     }
 }

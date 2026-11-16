@@ -166,20 +166,35 @@ fn watched(r: &RawVolume, cfg: &Config) -> bool {
     })
 }
 
-/// The `\\server\share…` form of a network path (`\\…` or `\\?\UNC\…`);
-/// `\\?\` and `\\.\` device paths are local. Mapped drive letters are
-/// detected at runtime, not here.
-pub fn network_path(path: &str) -> Option<String> {
-    const UNC: &[u8] = br"\\?\UNC\";
+/// `path` without a `\\?\` / `\\.\` prefix that only wraps an ordinary
+/// path: `\\?\UNC\srv\share` → `\\srv\share`, `\\?\Z:\x` → `Z:\x`. Other
+/// device paths (`\\?\Volume{…}\`, `\\.\C:`) come back unchanged.
+pub fn strip_device_prefix(path: &str) -> String {
     let b = path.as_bytes();
-    if b.len() >= UNC.len() && b[..UNC.len()].eq_ignore_ascii_case(UNC) {
-        // The prefix is ASCII, so slicing at its length is a char boundary.
-        return Some(format!(r"\\{}", &path[UNC.len()..]));
+    if !(b.starts_with(br"\\?\") || b.starts_with(br"\\.\")) {
+        return path.to_string();
     }
+    // The prefixes are ASCII, so slicing after them is a char boundary.
+    let rest = &path[4..];
+    let r = rest.as_bytes();
+    if r.len() >= 4 && r[..4].eq_ignore_ascii_case(br"UNC\") {
+        return format!(r"\\{}", &rest[4..]);
+    }
+    if r.len() >= 3 && r[0].is_ascii_alphabetic() && &r[1..3] == br":\" {
+        return rest.to_string();
+    }
+    path.to_string()
+}
+
+/// The `\\server\share…` form of a network path (`\\…`, `\\?\UNC\…` or
+/// `\\.\UNC\…`); other `\\?\` and `\\.\` device paths are local. Mapped
+/// drive letters are detected at runtime, not here.
+pub fn network_path(path: &str) -> Option<String> {
+    let path = strip_device_prefix(path);
     if path.starts_with(r"\\?\") || path.starts_with(r"\\.\") {
         return None;
     }
-    path.starts_with(r"\\").then(|| path.to_string())
+    path.starts_with(r"\\").then_some(path)
 }
 
 /// `Some('Z')` when `path` starts with a drive letter and colon.
@@ -226,7 +241,10 @@ impl VolumeSource for Win32Volumes {
             .collect()
     }
 
-    fn resolve_path(&self, path: &str) -> Option<RawVolume> {
+    fn resolve_path(&self, configured: &str) -> Option<RawVolume> {
+        // `\\?\Z:\…` must reach the mapped-drive check below as `Z:\…`.
+        let stripped = strip_device_prefix(configured);
+        let path = stripped.as_str();
         if let Some(unc) = network_path(path) {
             return Some(network_raw(&unc));
         }
@@ -260,14 +278,26 @@ impl VolumeSource for Win32Volumes {
                 }
             }
         };
-        vol.label = path.to_string();
+        vol.label = configured.to_string();
         Some(vol)
     }
 }
 
+/// Why a fixed or removable volume whose volume-info query returned
+/// `name` is left out of the scan, or `None` to keep it. A failed query
+/// means an empty slot (an empty card reader still has a GUID) or an
+/// unreadable fixed volume (locked BitLocker, failing disk), which would
+/// otherwise sit on the card as a permanent "?" row.
+fn skip_reason(drive_type: u32, name: Option<&str>) -> Option<&'static str> {
+    match name {
+        Some(_) => None,
+        None if drive_type == DRIVE_REMOVABLE => Some("has no media"),
+        None => Some("is unreadable (locked or failing)"),
+    }
+}
+
 /// The fixed or removable volume at `letter:`, or `None` for other drive
-/// types, removable slots with no media (an empty card reader still has a
-/// GUID, but its volume-info query fails) and volumes without a GUID. Call
+/// types, volumes [`skip_reason`] rejects and volumes without a GUID. Call
 /// [`suppress_critical_error_dialogs`] first so empty slots fail quietly.
 fn lettered_volume(letter: char) -> Option<RawVolume> {
     let root = format!("{letter}:\\");
@@ -276,8 +306,8 @@ fn lettered_volume(letter: char) -> Option<RawVolume> {
         return None;
     }
     let name = volume_name(&root);
-    if name.is_none() && dtype == DRIVE_REMOVABLE {
-        log::debug!("volumes: {root} has no media; skipped");
+    if let Some(why) = skip_reason(dtype, name.as_deref()) {
+        log::debug!("volumes: {root} {why}; skipped");
         return None;
     }
     let Some(guid) = volume_guid(&root) else {
@@ -651,5 +681,34 @@ mod tests {
         assert!(query_free(&c.root).unwrap_or(0) > 0);
         let dev = Win32Volumes.resolve_path(r"C:\Windows").expect("resolves");
         assert_eq!(dev.id, c.id);
+    }
+
+    #[test]
+    fn device_prefixes_strip_to_plain_paths() {
+        assert_eq!(strip_device_prefix(r"\\?\UNC\nas\b"), r"\\nas\b");
+        assert_eq!(strip_device_prefix(r"\\.\UNC\nas\b"), r"\\nas\b");
+        assert_eq!(strip_device_prefix(r"\\.\unc\NAS\b"), r"\\NAS\b");
+        assert_eq!(strip_device_prefix(r"\\?\Z:\share"), r"Z:\share");
+        assert_eq!(strip_device_prefix(r"\\.\z:\share"), r"z:\share");
+        assert_eq!(
+            strip_device_prefix(r"\\?\Volume{x}\data"),
+            r"\\?\Volume{x}\data"
+        );
+        assert_eq!(strip_device_prefix(r"\\.\C:"), r"\\.\C:");
+        assert_eq!(strip_device_prefix(r"C:\dev"), r"C:\dev");
+        assert_eq!(strip_device_prefix(r"\\nas\b"), r"\\nas\b");
+    }
+
+    #[test]
+    fn dot_unc_prefix_is_a_network_path() {
+        assert_eq!(network_path(r"\\.\UNC\nas\b").as_deref(), Some(r"\\nas\b"));
+    }
+
+    #[test]
+    fn unreadable_volumes_are_skipped_whatever_their_type() {
+        assert!(skip_reason(DRIVE_REMOVABLE, None).is_some(), "empty slot");
+        assert!(skip_reason(DRIVE_FIXED, None).is_some(), "locked BitLocker");
+        assert_eq!(skip_reason(DRIVE_FIXED, Some("")), None);
+        assert_eq!(skip_reason(DRIVE_REMOVABLE, Some("Stick")), None);
     }
 }
