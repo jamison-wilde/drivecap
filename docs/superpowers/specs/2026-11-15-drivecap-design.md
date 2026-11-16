@@ -58,6 +58,7 @@ Rust builds (`target/` trees, worktrees, cargo registry) silently fill drives un
 - **Break-through:** a new level crossing, or entering dire, clears that volume's snooze.
 - A dire volume **can** be snoozed, but **only for a timed duration — never "Next level"** (caps silence on a dire drive).
 - Snoozed surface does not fade in for periodic reminders.
+- Snooze-all (header Zz, or right-click/tray Snooze ▸ applied to all) hides the card immediately (fade out starts at once, no linger). Waking all does not hide. (User, 2026-11-15.)
 
 ## 5. Surface (decided — see `docs/design/`)
 
