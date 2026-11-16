@@ -61,10 +61,13 @@ impl Volumes {
         self.map = next;
     }
 
-    /// Recomputes every volume's rule from `cfg` (config reload).
-    pub fn apply_rules(&mut self, cfg: &Config) {
+    /// Recomputes every volume's rule from `cfg` (config reload) and makes
+    /// each due now, so the new rule applies on the next tick rather than
+    /// up to a full poll interval later.
+    pub fn apply_rules(&mut self, cfg: &Config, now: u64) {
         for v in self.map.values_mut() {
             v.rule = cfg.rule_for(&v.info.id);
+            v.next_poll_at = now;
         }
     }
 

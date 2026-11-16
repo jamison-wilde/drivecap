@@ -129,9 +129,13 @@ pub enum Effect {
     },
     /// Re-enumerate volumes and send back `VolumesScanned`.
     Rescan,
-    /// Repaint with the current view and alpha.
+    /// Repaint with the current view and alpha. The adapter re-runs
+    /// `layout::compute` on every paint, so value, title and alpha changes
+    /// need nothing more.
     Redraw,
-    /// Recompute the card geometry (row set, mode or font changed), then repaint.
+    /// The window size or position may change: the row count, mode or font
+    /// changed (including the header-only card with no rows). The adapter
+    /// resizes and re-anchors the window, then repaints.
     Relayout,
     SetClickThrough(bool),
     SetAnim(AnimRate),
@@ -157,7 +161,8 @@ pub struct Controller {
     cfg: Config,
     writable: bool,
     vols: Volumes,
-    connected: Vec<(VolumeId, String, bool)>,
+    /// Connected volumes (id, Volumes ▸ label) from the latest scan.
+    connected: Vec<(VolumeId, String)>,
     vis: Visibility,
     popup: Option<Popup>,
     last_rescan: u64,
@@ -224,7 +229,7 @@ impl Controller {
             Input::ConfigReloaded(cfg) => {
                 self.cfg = cfg;
                 self.writable = true;
-                self.vols.apply_rules(&self.cfg);
+                self.vols.apply_rules(&self.cfg, now);
                 fx.extend([Effect::Rescan, Effect::Relayout]);
             }
             Input::Cmd(cmd) => self.command(cmd, now, &mut fx),
@@ -280,12 +285,17 @@ impl Controller {
     }
 
     /// Connected volumes for the Volumes ▸ menu: id, `"E: SanDisk 64GB"`
-    /// label, and whether it is currently watched.
+    /// label, and whether it is watched right now (live, so a row hidden
+    /// since the last scan reads unchecked).
     pub fn connected_volumes(&self) -> Vec<(VolumeId, String, bool)> {
-        self.connected.clone()
+        self.connected
+            .iter()
+            .map(|(id, label)| (id.clone(), label.clone(), self.vols.contains(id)))
+            .collect()
     }
 
-    /// Tray glyph colour, snoozed mark and tooltip (worst awake at-risk volume).
+    /// Tray glyph colour, snoozed mark and tooltip: the worst awake at-risk
+    /// volume, else "snoozed", else the first unreachable one, else healthy.
     pub fn tray_state(&self, now: u64) -> TrayState {
         let at_risk: Vec<_> = self.vols.iter().filter(|v| v.alert.is_at_risk()).collect();
         let worst = at_risk
@@ -295,11 +305,7 @@ impl Controller {
         let all_snoozed = !at_risk.is_empty() && worst.is_none();
         let (dot, tooltip) = match worst {
             Some(v) => {
-                let name = if v.info.letter.is_empty() {
-                    &v.info.label
-                } else {
-                    &v.info.letter
-                };
+                let name = short_name(&v.info);
                 let free = format_free(v.alert.free.unwrap_or(0));
                 let dot = if v.alert.zone == Zone::Dire {
                     Dot::DireAccent
@@ -309,7 +315,13 @@ impl Controller {
                 (dot, format!("Drivecap — {name} {free} free"))
             }
             None if all_snoozed => (Dot::Muted, "Drivecap — snoozed".to_owned()),
-            None => (Dot::Muted, "Drivecap — all drives healthy".to_owned()),
+            None => match self.vols.iter().find(|v| v.alert.zone == Zone::Unreachable) {
+                Some(v) => (
+                    Dot::Muted,
+                    format!("Drivecap — {} unreachable", short_name(&v.info)),
+                ),
+                None => (Dot::Muted, "Drivecap — all drives healthy".to_owned()),
+            },
         };
         TrayState {
             dot,
@@ -344,8 +356,7 @@ impl Controller {
             .into_iter()
             .map(|r| {
                 let label = format!("{} {}", r.letter, r.label).trim().to_owned();
-                let watched = self.vols.contains(&r.id);
-                (r.id, label, watched)
+                (r.id, label)
             })
             .collect();
         self.last_rescan = now;
@@ -469,7 +480,7 @@ impl Controller {
 
     /// Human label for a config entry: the Volumes ▸ label, else letter + label.
     fn entry_label(&self, id: &VolumeId) -> String {
-        if let Some((_, label, _)) = self.connected.iter().find(|(c, _, _)| c == id) {
+        if let Some((_, label)) = self.connected.iter().find(|(c, _)| c == id) {
             return label.clone();
         }
         self.vols
@@ -533,6 +544,15 @@ impl Controller {
         } else {
             AnimRate::Off
         }
+    }
+}
+
+/// Tray/tooltip name: the drive letter, or the label for mounts and shares.
+fn short_name(info: &VolumeInfo) -> &str {
+    if info.letter.is_empty() {
+        &info.label
+    } else {
+        &info.letter
     }
 }
 
@@ -984,5 +1004,104 @@ mod tests {
         let fx = cmd(&mut c, Command::ToggleMode, T0);
         assert_eq!(c.config().mode, Mode::Minimized);
         assert!(fx.contains(&Effect::SaveConfig) && fx.contains(&Effect::Relayout));
+    }
+    #[test]
+    fn hidden_row_shows_unwatched_and_toggle_re_enables() {
+        let mut c = ctl();
+        sample(&mut c, 50.0, T0);
+        cmd(&mut c, Command::HideRow(0), T0);
+        let (id, label, watched) = c.connected_volumes().remove(0);
+        assert!(!watched, "hidden volume still checked in Volumes ▸");
+        cmd(&mut c, Command::ToggleVolume { id, label }, T0);
+        assert_eq!(c.config().entry_enabled(&c_id()), Some(true));
+    }
+
+    #[test]
+    fn rescan_selecting_volume_marks_it_watched() {
+        let mut c = Controller::new(Config::default(), true, T0);
+        let raw = raw_of(&c_info("C:"));
+        c.handle(
+            Input::VolumesScanned {
+                selected: Vec::new(),
+                connected: vec![raw],
+            },
+            T0,
+        );
+        assert!(!c.connected_volumes()[0].2);
+        scan(&mut c, vec![c_info("C:")], T0 + 10);
+        assert!(c.connected_volumes()[0].2);
+    }
+
+    #[test]
+    fn toggle_volume_enables_connected_but_unselected() {
+        let mut c = Controller::new(Config::default(), true, T0);
+        let raw = raw_of(&c_info("C:"));
+        c.handle(
+            Input::VolumesScanned {
+                selected: Vec::new(),
+                connected: vec![raw],
+            },
+            T0,
+        );
+        let (id, label, watched) = c.connected_volumes().remove(0);
+        assert!(!watched);
+        let fx = cmd(&mut c, Command::ToggleVolume { id, label }, T0);
+        assert_eq!(c.config().entry_enabled(&c_id()), Some(true));
+        assert!(fx.contains(&Effect::SaveConfig) && fx.contains(&Effect::Rescan));
+    }
+
+    #[test]
+    fn config_reload_polls_on_next_tick() {
+        let mut c = ctl();
+        c.handle(Input::Tick, T0);
+        sample(&mut c, 50.0, T0);
+        c.handle(Input::ConfigReloaded(Config::default()), T0 + 10);
+        assert!(polled_c(&c.handle(Input::Tick, T0 + 20)));
+    }
+
+    #[test]
+    fn tooltip_names_unreachable_volume() {
+        let mut c = Controller::new(Config::default(), true, T0);
+        scan(&mut c, vec![nas_info()], T0);
+        c.handle(
+            Input::Sample {
+                id: nas_info().id,
+                free: None,
+            },
+            T0,
+        );
+        let s = c.tray_state(T0);
+        assert_eq!(s.tooltip, r"Drivecap — \\nas\builds unreachable");
+        assert_eq!((s.dot, s.all_snoozed), (Dot::Muted, false));
+    }
+
+    #[test]
+    fn became_unreachable_shows_card() {
+        let mut c = Controller::new(Config::default(), true, T0);
+        scan(&mut c, vec![nas_info()], T0);
+        let id = nas_info().id;
+        c.handle(Input::Sample { id, free: None }, T0);
+        assert!(c.visibility().is_visible());
+    }
+
+    #[test]
+    fn dire_snooze_expiry_re_pins_and_shows() {
+        let mut c = ctl();
+        sample(&mut c, 1.0, T0);
+        cmd(&mut c, Command::SnoozeRow(0), T0);
+        tick_through(&mut c, T0, T0 + 20_000);
+        assert!(!c.visibility().is_visible());
+        c.handle(Input::Tick, T0 + 600_000);
+        assert!(c.visibility().is_visible());
+        assert!(!c.visibility().click_through(), "re-pinned");
+    }
+
+    #[test]
+    fn repeat_input_does_not_re_emit_state_effects() {
+        let mut c = ctl();
+        sample(&mut c, 1.0, T0);
+        let fx = sample(&mut c, 1.0, T0);
+        assert!(!fx.iter().any(|e| matches!(e, Effect::SetClickThrough(_))));
+        assert!(!fx.contains(&Effect::UpdateTray));
     }
 }

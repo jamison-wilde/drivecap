@@ -5,13 +5,16 @@
 //! long-lived worker thread fed over a channel; [`Win32FreeProbe`] bounds
 //! each query with a wall-clock budget (default 3 s) by running it on a
 //! throwaway helper thread joined with `recv_timeout`. A timed-out helper
-//! keeps running until the OS returns; its result is discarded.
+//! keeps running until the OS returns; its result is discarded. While a
+//! root's helper is still alive, further probes of that root return
+//! `None` at once instead of stacking up more stuck threads.
 //! Pattern adapted from exbar's `reachability_probe.rs`.
 
 use crate::config::VolumeId;
 use crate::volumes;
 use std::collections::HashSet;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 /// Default per-probe wall-clock budget.
@@ -29,6 +32,8 @@ pub trait FreeProbe: Send + Sync {
 pub struct Win32FreeProbe {
     timeout: Duration,
     query: fn(&str) -> Option<u64>,
+    /// Roots whose helper thread has not returned yet.
+    busy: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Win32FreeProbe {
@@ -39,7 +44,11 @@ impl Win32FreeProbe {
 
     /// Injects the blocking query and budget (tests use a sleeping fn).
     pub fn with_fn(query: fn(&str) -> Option<u64>, timeout: Duration) -> Self {
-        Win32FreeProbe { timeout, query }
+        Win32FreeProbe {
+            timeout,
+            query,
+            busy: Arc::default(),
+        }
     }
 }
 
@@ -51,12 +60,25 @@ impl Default for Win32FreeProbe {
 
 impl FreeProbe for Win32FreeProbe {
     fn probe(&self, root: &str) -> Option<u64> {
-        let (tx, rx) = mpsc::channel();
         let root = root.to_owned();
+        {
+            let mut busy = self.busy.lock().unwrap_or_else(PoisonError::into_inner);
+            if !busy.insert(root.clone()) {
+                // A previous helper for this root is still stuck in the OS.
+                return None;
+            }
+        }
+        let (tx, rx) = mpsc::channel();
         let query = self.query;
+        let busy = Arc::clone(&self.busy);
         std::thread::spawn(move || {
+            let free = query(&root);
+            // Free the root before replying so an immediate re-probe can run.
+            busy.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&root);
             // The receiver is gone after a timeout; the late result is dropped.
-            let _ = tx.send(query(&root));
+            let _ = tx.send(free);
         });
         rx.recv_timeout(self.timeout).ok().flatten()
     }
@@ -68,6 +90,8 @@ pub struct ProbeWorker {
     tx: Sender<(VolumeId, String)>,
     rx: Receiver<(VolumeId, Option<u64>)>,
     in_flight: HashSet<VolumeId>,
+    /// The worker thread's death has been logged.
+    dead_logged: bool,
 }
 
 impl ProbeWorker {
@@ -91,6 +115,7 @@ impl ProbeWorker {
             tx: req_tx,
             rx: res_rx,
             in_flight: HashSet::new(),
+            dead_logged: false,
         }
     }
 
@@ -101,16 +126,37 @@ impl ProbeWorker {
         }
         if self.tx.send((id.clone(), root)).is_ok() {
             self.in_flight.insert(id);
+        } else {
+            self.log_dead();
         }
     }
 
     /// Results ready so far (non-blocking); clears their in-flight marks.
     pub fn drain(&mut self) -> Vec<(VolumeId, Option<u64>)> {
-        let out: Vec<_> = self.rx.try_iter().collect();
+        let mut out = Vec::new();
+        loop {
+            match self.rx.try_recv() {
+                Ok(r) => out.push(r),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.log_dead();
+                    break;
+                }
+            }
+        }
         for (id, _) in &out {
             self.in_flight.remove(id);
         }
         out
+    }
+
+    /// The worker thread exited (a probe panicked): network folders stop
+    /// updating. Logged once.
+    fn log_dead(&mut self) {
+        if !self.dead_logged {
+            self.dead_logged = true;
+            log::warn!("net_probe: worker thread is gone; network folders will not refresh");
+        }
     }
 }
 
@@ -175,6 +221,11 @@ mod tests {
         let mut got = drain_n(&mut w, 2);
         got.sort();
         assert_eq!(got, vec![(id("a"), Some(42)), (id("b"), None)]);
+        // notify() runs after the send, so the count may trail the results.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while notified.load(Ordering::SeqCst) < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         assert_eq!(notified.load(Ordering::SeqCst), 2);
     }
 
@@ -218,5 +269,34 @@ mod tests {
         }
         let p = Win32FreeProbe::with_fn(fast, Duration::from_millis(500));
         assert_eq!(p.probe("X:\\"), Some(9));
+    }
+    static HANG_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn hang_query(_root: &str) -> Option<u64> {
+        HANG_CALLS.fetch_add(1, Ordering::SeqCst);
+        loop {
+            std::thread::park();
+        }
+    }
+
+    #[test]
+    fn hung_root_does_not_spawn_more_helpers() {
+        let p = Win32FreeProbe::with_fn(hang_query, Duration::from_millis(20));
+        assert_eq!(p.probe(r"\\dead\a"), None);
+        let start = Instant::now();
+        assert_eq!(p.probe(r"\\dead\a"), None);
+        assert!(start.elapsed() < Duration::from_millis(15), "waited again");
+        assert_eq!(HANG_CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    fn quick(_: &str) -> Option<u64> {
+        Some(5)
+    }
+
+    #[test]
+    fn finished_helper_frees_root_for_next_probe() {
+        let p = Win32FreeProbe::with_fn(quick, Duration::from_millis(500));
+        assert_eq!(p.probe("X:\\"), Some(5));
+        assert_eq!(p.probe("X:\\"), Some(5));
     }
 }
