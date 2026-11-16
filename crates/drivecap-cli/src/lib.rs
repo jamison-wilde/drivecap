@@ -31,10 +31,12 @@
 //! - [`palette`] — light/dark design tokens with config overrides.
 //! - [`model`] — surface view model: sorted rows, title, state dot, halo.
 //! - [`visibility`] — fade/hold/linger, hover rest, pinning and click-through.
+//! - [`layout`] — card geometry, DPI metrics, hit testing, popup anchors.
+//! - [`position`] — per-monitor position store, work-area clamping, resize anchoring.
 //!
-//! The remaining pure cores (layout, controller,
-//! menu) and Win32 adapters (volumes, net probe, paint, card window,
-//! tray, popups) land in later tasks; `CLAUDE.md` lists the planned set.
+//! The remaining pure cores (controller, menu) and Win32 adapters
+//! (volumes, net probe, paint, card window, tray, popups) land in later
+//! tasks; `CLAUDE.md` lists the planned set.
 //!
 //! ## Where to read next
 //!
@@ -46,9 +48,11 @@ pub mod alerts;
 pub mod clock;
 pub mod config;
 pub mod error;
+pub mod layout;
 pub mod log;
 pub mod model;
 pub mod palette;
 pub mod paths;
+pub mod position;
 pub mod theme;
 pub mod visibility;

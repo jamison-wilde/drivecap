@@ -19,7 +19,7 @@ use windows::core::w;
 /// Scale a logical pixel value by the given DPI.
 /// 96 DPI = 100% scaling.
 pub fn scale(logical_px: i32, dpi: u32) -> i32 {
-    (logical_px as u32 * dpi / 96) as i32
+    ((i64::from(logical_px) * i64::from(dpi)) / 96) as i32
 }
 
 /// Query the system "apps use dark mode" setting. Uncached: reads the
@@ -80,6 +80,11 @@ mod tests {
     fn scale_at_125_percent() {
         // 24 * 120 / 96 = 30
         assert_eq!(scale(24, 120), 30);
+    }
+
+    #[test]
+    fn scale_handles_negative() {
+        assert_eq!(scale(-4, 144), -6);
     }
 
     #[test]
