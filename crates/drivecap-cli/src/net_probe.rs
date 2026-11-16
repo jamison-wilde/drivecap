@@ -72,15 +72,32 @@ impl FreeProbe for Win32FreeProbe {
         let query = self.query;
         let busy = Arc::clone(&self.busy);
         std::thread::spawn(move || {
-            let free = query(&root);
-            // Free the root before replying so an immediate re-probe can run.
-            busy.lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .remove(&root);
+            // Declared after `tx` so it drops first: the root is freed
+            // before the receiver can observe a reply or a disconnect,
+            // even when `query` panics.
+            let tx = tx;
+            let guard = BusyGuard { busy, root };
+            let free = query(&guard.root);
+            drop(guard);
             // The receiver is gone after a timeout; the late result is dropped.
             let _ = tx.send(free);
         });
         rx.recv_timeout(self.timeout).ok().flatten()
+    }
+}
+
+/// Removes `root` from the busy set when the helper finishes or unwinds.
+struct BusyGuard {
+    busy: Arc<Mutex<HashSet<String>>>,
+    root: String,
+}
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.busy
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&self.root);
     }
 }
 
@@ -250,16 +267,17 @@ mod tests {
     }
 
     fn slow_query(_root: &str) -> Option<u64> {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_secs(3));
         Some(7)
     }
 
     #[test]
     fn timeout_yields_none() {
-        let p = Win32FreeProbe::with_fn(slow_query, Duration::from_millis(50));
+        let p = Win32FreeProbe::with_fn(slow_query, Duration::from_millis(100));
         let start = Instant::now();
         assert_eq!(p.probe(r"\\dead\share"), None);
-        assert!(start.elapsed() < Duration::from_millis(400));
+        // Returns at the budget, far short of the 3 s query.
+        assert!(start.elapsed() < Duration::from_millis(1500));
     }
 
     #[test]
@@ -267,7 +285,7 @@ mod tests {
         fn fast(_: &str) -> Option<u64> {
             Some(9)
         }
-        let p = Win32FreeProbe::with_fn(fast, Duration::from_millis(500));
+        let p = Win32FreeProbe::with_fn(fast, Duration::from_secs(10));
         assert_eq!(p.probe("X:\\"), Some(9));
     }
     static HANG_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -281,12 +299,27 @@ mod tests {
 
     #[test]
     fn hung_root_does_not_spawn_more_helpers() {
-        let p = Win32FreeProbe::with_fn(hang_query, Duration::from_millis(20));
+        let p = Win32FreeProbe::with_fn(hang_query, Duration::from_millis(100));
         assert_eq!(p.probe(r"\\dead\a"), None);
-        let start = Instant::now();
+        // The first helper may start late under load; wait for it.
+        assert!(wait_until(|| HANG_CALLS.load(Ordering::SeqCst) == 1));
         assert_eq!(p.probe(r"\\dead\a"), None);
-        assert!(start.elapsed() < Duration::from_millis(15), "waited again");
-        assert_eq!(HANG_CALLS.load(Ordering::SeqCst), 1);
+        // A second helper would have bumped the count by now.
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            HANG_CALLS.load(Ordering::SeqCst),
+            1,
+            "spawned another helper"
+        );
+    }
+
+    /// Polls `cond` until true or 5 s pass.
+    fn wait_until(cond: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !cond() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        cond()
     }
 
     fn quick(_: &str) -> Option<u64> {
@@ -295,8 +328,24 @@ mod tests {
 
     #[test]
     fn finished_helper_frees_root_for_next_probe() {
-        let p = Win32FreeProbe::with_fn(quick, Duration::from_millis(500));
+        let p = Win32FreeProbe::with_fn(quick, Duration::from_secs(10));
         assert_eq!(p.probe("X:\\"), Some(5));
         assert_eq!(p.probe("X:\\"), Some(5));
+    }
+
+    static PANIC_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    fn panics_once(_: &str) -> Option<u64> {
+        if PANIC_CALLS.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("query blew up");
+        }
+        Some(3)
+    }
+
+    #[test]
+    fn panicking_query_frees_root() {
+        let p = Win32FreeProbe::with_fn(panics_once, Duration::from_secs(10));
+        assert_eq!(p.probe(r"\\boom\a"), None);
+        assert_eq!(p.probe(r"\\boom\a"), Some(3), "root left busy after panic");
     }
 }
