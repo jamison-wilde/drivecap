@@ -54,9 +54,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p drivecap-cli
-      - run: dotnet tool install --global wix
+      - run: dotnet tool install --global wix --version 7.*
       - run: wix eula accept wix7
-      - run: wix extension add --global WixToolset.Util.wixext WixToolset.UI.wixext
+      - run: wix extension add --global WixToolset.Util.wixext/7.0.0 WixToolset.UI.wixext/7.0.0
       - name: Build MSI
         run: bash ./scripts/build-msi.sh
       - name: Upload MSI artifact
