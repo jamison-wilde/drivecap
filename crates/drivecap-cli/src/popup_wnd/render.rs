@@ -302,6 +302,27 @@ mod tests {
         }
     }
 
+    /// Writes the README popup images at 150 % (see
+    /// `scripts/readme-images.mjs`).
+    #[test]
+    #[ignore = "writes README images"]
+    fn dump_readme_images() {
+        let m = Metrics::new(96, 150);
+        let fonts = Fonts::new(None, &m).unwrap();
+        let tm = GdiMeasure::new(&fonts).unwrap();
+        let opacity = PopupGeom::Opacity(opacity_geometry(m.px(200), m.px(56), &m));
+        let settings = PopupGeom::Settings(settings_geometry(m.px(230), &m, &tm));
+        for dark in [true, false] {
+            let theme = if dark { "dark" } else { "light" };
+            let pal = Palette::new(dark, &ColorOverrides::default());
+            for (name, g) in [("opacity", &opacity), ("settings", &settings)] {
+                let mut p = Painter::new().unwrap();
+                draw(&mut p, g, &scene(None), &pal, &fonts, &m).unwrap();
+                crate::paint::readme::write_painter(&format!("popup-{name}-{theme}"), &p);
+            }
+        }
+    }
+
     /// 32-bpp top-down BMP of the premultiplied DIB over a neutral ground.
     fn write_bmp(path: &std::path::Path, p: &Painter, dark: bool) {
         let (w, h) = p.size();

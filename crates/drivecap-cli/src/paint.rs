@@ -480,6 +480,50 @@ impl Drop for Painter {
     }
 }
 
+/// Test-only writer for the README images (`scripts/readme-images.mjs`
+/// turns them into PNGs): `./tmp/readme/<name>.rgba`, an 8-byte header
+/// (width, height as u32 LE) then straight RGBA8 rows.
+#[cfg(test)]
+pub(crate) mod readme {
+    /// `(r, g, b, a)` of a premultiplied BGRA pixel, un-premultiplied.
+    pub fn unpremultiply(px: u32) -> [u8; 4] {
+        let a = px >> 24;
+        let ch = |sh: u32| match a {
+            0 => 0,
+            _ => ((((px >> sh) & 0xFF) * 255 + a / 2) / a).min(255) as u8,
+        };
+        [ch(16), ch(8), ch(0), a as u8]
+    }
+
+    /// `(r, g, b, a)` of a straight-alpha BGRA pixel.
+    pub fn straight(px: u32) -> [u8; 4] {
+        [
+            (px >> 16) as u8,
+            (px >> 8) as u8,
+            px as u8,
+            (px >> 24) as u8,
+        ]
+    }
+
+    pub fn write(name: &str, w: i32, h: i32, rgba: impl Iterator<Item = [u8; 4]>) {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tmp/readme");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut out = Vec::with_capacity(8 + (w * h * 4) as usize);
+        out.extend_from_slice(&(w as u32).to_le_bytes());
+        out.extend_from_slice(&(h as u32).to_le_bytes());
+        rgba.for_each(|p| out.extend_from_slice(&p));
+        assert_eq!(out.len(), 8 + (w * h * 4) as usize, "{name}: pixel count");
+        std::fs::write(dir.join(format!("{name}.rgba")), out).unwrap();
+    }
+
+    /// Writes a premultiplied [`super::Painter`] DIB.
+    pub fn write_painter(name: &str, p: &super::Painter) {
+        let (w, h) = p.size();
+        let px = (0..h).flat_map(|y| (0..w).map(move |x| (x, y)));
+        write(name, w, h, px.map(|(x, y)| unpremultiply(p.pixel(x, y))));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::gdi::wide;
@@ -757,6 +801,22 @@ mod tests {
         assert_eq!(px, opaque(s.pal.dire));
         // SAFETY: destroys the window this test created.
         unsafe { DestroyWindow(hwnd).unwrap() };
+    }
+
+    /// Writes the README card images (see `scripts/readme-images.mjs`).
+    #[test]
+    #[ignore = "writes README images"]
+    fn dump_readme_images() {
+        let mut mini = sample_view();
+        mini.rows = vec![row("C:", "Windows", "9.8 GB", RowState::Warning, 0.49)];
+        (mini.mode, mini.halo, mini.dot) = (Mode::Minimized, false, Dot::Warning);
+        for dark in [true, false] {
+            let theme = if dark { "dark" } else { "light" };
+            let card = render_at(&sample_view(), dark, 150, Some(400), true);
+            super::readme::write_painter(&format!("card-{theme}"), &card.painter);
+            let small = render_at(&mini, dark, 150, None, true);
+            super::readme::write_painter(&format!("card-minimized-{theme}"), &small.painter);
+        }
     }
 
     /// Writes `./tmp/card-*.bmp` (composited over grey) for eyeballing.

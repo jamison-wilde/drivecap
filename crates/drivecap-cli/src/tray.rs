@@ -627,6 +627,27 @@ mod tests {
         }
     }
 
+    /// Writes the README tray glyphs at 32 px (see
+    /// `scripts/readme-images.mjs`).
+    #[test]
+    #[ignore = "writes README images"]
+    fn dump_readme_images() {
+        for dark in [true, false] {
+            let p = Palette::new(dark, &ColorOverrides::default());
+            let theme = if dark { "dark" } else { "light" };
+            for (name, dot, zz) in [
+                ("healthy", Dot::Muted, false),
+                ("warning", Dot::Warning, false),
+                ("dire", Dot::DireAccent, false),
+                ("snoozed", Dot::Muted, true),
+            ] {
+                let px = glyph_pixels(32, dot_color(dot, &p), p.text, zz);
+                let rgba = px.into_iter().map(crate::paint::readme::straight);
+                crate::paint::readme::write(&format!("tray-{name}-{theme}"), 32, 32, rgba);
+            }
+        }
+    }
+
     /// 32-bpp top-down BMP (what `tmp/bmp2png.mjs` reads) of
     /// straight-alpha pixels composited over grey `bg`.
     fn write_bmp(path: &std::path::Path, px: &[u32], n: i32, bg: u32) {
