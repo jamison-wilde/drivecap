@@ -11,11 +11,39 @@ use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 
 use super::{AppState, WinOp, effects, with_state};
 use crate::config::{FontSpec, VolumeId};
-use crate::controller::{Command, Input};
+use crate::controller::{Command, Effect, Input};
 use crate::menu::{self, MenuNode, RowRef};
 use crate::palette::Palette;
 use crate::tray::{self, Tray, TrayAction};
 use crate::{contextmenu, font, theme};
+
+/// The font dialog's modal loop: at most one at a time, and a quit
+/// requested meanwhile (tray menu) waits until it closes rather than
+/// destroying the dialog's owner under it.
+#[derive(Debug, Default)]
+pub(super) struct ModalState {
+    font_open: bool,
+    quit_pending: bool,
+}
+
+impl ModalState {
+    /// `true` (and marks it open) unless a font dialog is already up.
+    pub(super) fn begin_font_dialog(&mut self) -> bool {
+        !std::mem::replace(&mut self.font_open, true)
+    }
+
+    /// Marks the dialog closed; `true` if a quit was deferred meanwhile.
+    pub(super) fn end_font_dialog(&mut self) -> bool {
+        self.font_open = false;
+        std::mem::take(&mut self.quit_pending)
+    }
+
+    /// `true` to quit now; while the dialog is open, defers it instead.
+    pub(super) fn request_quit(&mut self) -> bool {
+        self.quit_pending |= self.font_open;
+        !self.font_open
+    }
+}
 
 /// A right-click menu to show: what it shows and what its ids refer to.
 #[derive(Debug, PartialEq)]
@@ -86,11 +114,19 @@ pub(super) fn run(hwnd: HWND, op: ShellOp) {
             });
         }
         ShellOp::FontDialog(current) => {
-            if let Some(spec) = font::choose_font(hwnd, current.as_ref()) {
-                with_state(hwnd, |st| {
-                    effects::send(hwnd, st, Input::Cmd(Command::FontChosen(spec)));
-                });
-            }
+            let chosen = font::choose_font(hwnd, current.as_ref());
+            with_state(hwnd, |st| {
+                let quit = st.modal.end_font_dialog();
+                let mut fx = Vec::new();
+                if let Some(spec) = chosen {
+                    fx = effects::feed(st, Input::Cmd(Command::FontChosen(spec)));
+                }
+                if quit {
+                    log::info!("running the quit deferred by the font dialog");
+                    fx.push(Effect::Quit);
+                }
+                effects::apply_effects(hwnd, st, fx);
+            });
         }
     }
 }
@@ -171,6 +207,18 @@ mod tests {
             current_command(Command::HideRow(0), Some(&row), &now[..2]),
             None
         );
+    }
+
+    #[test]
+    fn font_dialog_is_single_and_quit_waits_for_it() {
+        let mut m = ModalState::default();
+        assert!(m.begin_font_dialog());
+        assert!(!m.begin_font_dialog(), "a second dialog is refused");
+        assert!(!m.request_quit(), "quit waits for the dialog");
+        assert!(m.end_font_dialog(), "closing it runs the deferred quit");
+        assert!(m.begin_font_dialog());
+        assert!(!m.end_font_dialog());
+        assert!(m.request_quit(), "no dialog: quit at once");
     }
 
     #[test]

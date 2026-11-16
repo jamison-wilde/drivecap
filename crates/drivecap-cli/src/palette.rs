@@ -66,6 +66,8 @@ pub struct Palette {
     pub warning_text: Rgb,
     pub dire: Rgb,
     pub dire_accent: Rgb,
+    /// Opacity-slider thumb ring.
+    pub thumb: Rgb,
 }
 
 const DIRE: Rgb = Rgb::hex(0xC42B1C);
@@ -83,6 +85,7 @@ const LIGHT: Palette = Palette {
     warning_text: Rgb::hex(0x8A5100),
     dire: DIRE,
     dire_accent: DIRE_ACCENT,
+    thumb: Rgb::WHITE,
 };
 
 const DARK: Palette = Palette {
@@ -97,6 +100,7 @@ const DARK: Palette = Palette {
     warning_text: Rgb::hex(0xF5B83D),
     dire: DIRE,
     dire_accent: DIRE_ACCENT,
+    thumb: Rgb::WHITE,
 };
 
 impl Palette {
@@ -181,6 +185,13 @@ mod tests {
         assert_eq!(p.warning_text, Rgb::hex(0xF5B83D));
         assert_eq!(p.dire, Rgb::hex(0xC42B1C));
         assert_eq!(p.dire_accent, Rgb::hex(0xE5372B));
+    }
+
+    #[test]
+    fn slider_thumb_token_is_white_in_both_themes() {
+        for dark in [false, true] {
+            assert_eq!(Palette::new(dark, &no_overrides()).thumb, Rgb::WHITE);
+        }
     }
 
     #[test]

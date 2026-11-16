@@ -250,7 +250,8 @@ pub fn dismiss_command(kind: Popup, value: u8) -> Command {
 pub struct KeySample {
     /// Held now.
     pub down: bool,
-    /// Pressed since the previous read (catches a click between ticks).
+    /// Pressed since the previous read (catches a click between ticks,
+    /// and a release + re-press while held at both reads).
     pub tapped: bool,
 }
 
@@ -265,7 +266,7 @@ impl DismissPoll {
     pub fn edges(&mut self, keys: [KeySample; 3]) -> [bool; 3] {
         let mut edges = [false; 3];
         for ((edge, held), k) in edges.iter_mut().zip(&mut self.held).zip(keys) {
-            *edge = !*held && (k.down || k.tapped);
+            *edge = k.tapped || (k.down && !*held);
             *held = k.down;
         }
         edges
@@ -524,6 +525,15 @@ mod tests {
         assert_eq!(p.edges([UP, UP, UP]), [false, false, false]);
         // A click entirely between two ticks still counts.
         assert_eq!(p.edges([TAPPED, UP, TAPPED]), [true, false, true]);
+    }
+
+    #[test]
+    fn release_and_repress_between_ticks_is_an_edge() {
+        let mut p = DismissPoll::default();
+        assert_eq!(p.edges([UP, PRESSED, UP]), [false, true, false]);
+        // Down at both samples, but pressed again in between.
+        assert_eq!(p.edges([UP, PRESSED, UP]), [false, true, false]);
+        assert_eq!(p.edges([UP, HELD, UP]), [false, false, false]);
     }
 
     #[test]

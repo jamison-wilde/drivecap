@@ -56,12 +56,14 @@ pub fn apply_effects(hwnd: HWND, st: &mut AppState, effects: Vec<Effect>) {
             Effect::UpdateTray => shell::update_tray(st),
             Effect::SaveConfig => save_config(st),
             Effect::OpenConfig => st.deferred.push(WinOp::OpenConfig(paths::config_path())),
-            Effect::ShowFontDialog => {
+            Effect::ShowFontDialog if st.modal.begin_font_dialog() => {
                 let current = st.ctl.config().font.clone();
                 st.deferred.push(WinOp::Shell(ShellOp::FontDialog(current)));
             }
+            Effect::ShowFontDialog => log::info!("font dialog already open"),
             Effect::ShowPopup(p) => popups::show(st, p),
-            Effect::Quit => quit(st),
+            Effect::Quit if st.modal.request_quit() => quit(st),
+            Effect::Quit => log::info!("quit deferred until the font dialog closes"),
         }
     }
     if relayout {

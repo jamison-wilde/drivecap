@@ -91,7 +91,7 @@ fn fill_opacity(
     raster::fill_rounded(buf, w, h, &done, r, pal.text);
     let tr = m.px(super::THUMB_R);
     let thumb = Rect::new(tx - tr, cy - tr, 2 * tr, 2 * tr);
-    raster::fill_rounded(buf, w, h, &thumb, tr as f32, Rgb::WHITE);
+    raster::fill_rounded(buf, w, h, &thumb, tr as f32, pal.thumb);
     raster::stroke_ring(buf, w, h, &thumb, tr as f32, 1.0, pal.border);
     let ring = m.px(THUMB_RING);
     let core = Rect::new(

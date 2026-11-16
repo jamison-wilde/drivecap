@@ -52,12 +52,15 @@ pub enum TrayAction {
 enum ClickSource {
     ButtonUp,
     Select,
+    /// `NIN_KEYSELECT` — Enter can report it twice for one press.
+    Key,
 }
 
 /// Version-4 icons report one left click as `WM_LBUTTONUP` *and*
 /// `NIN_SELECT`. The first one counts; the other one, arriving within
-/// 500 ms, is dropped. Two reports from the same channel (a
-/// double-click) are two clicks.
+/// 500 ms, is dropped. Two mouse reports from the same channel (a
+/// double-click) are two clicks; a keyboard select within 500 ms of any
+/// report (including another keyboard select) is the same activation.
 #[derive(Debug, Default)]
 pub struct ClickDedupe {
     last: Option<(ClickSource, u64)>,
@@ -66,7 +69,7 @@ pub struct ClickDedupe {
 impl ClickDedupe {
     fn accept(&mut self, src: ClickSource, now: u64) -> bool {
         if let Some((prev, at)) = self.last
-            && prev != src
+            && (prev != src || src == ClickSource::Key)
             && now.saturating_sub(at) < DEDUPE_MS
         {
             // The pair is consumed: the next report starts afresh.
@@ -89,7 +92,7 @@ pub fn decode(wp: usize, lp: isize, now: u64, d: &mut ClickDedupe) -> Option<Tra
         NIN_SELECT => d
             .accept(ClickSource::Select, now)
             .then_some(TrayAction::Click),
-        NIN_KEYSELECT => Some(TrayAction::Click),
+        NIN_KEYSELECT => d.accept(ClickSource::Key, now).then_some(TrayAction::Click),
         WM_CONTEXTMENU => {
             let v = wp as u32;
             Some(TrayAction::Menu(POINT {
@@ -293,6 +296,15 @@ impl IconKey {
         }
     }
 
+    /// After a failed redraw the icon still shows `old`'s visuals: keep
+    /// those (and the new tooltip) so the next update retries the redraw.
+    fn after_failed_redraw(self, old: &IconKey) -> IconKey {
+        IconKey {
+            tip: self.tip,
+            ..old.clone()
+        }
+    }
+
     fn icon(&self) -> DrivecapResult<HICON> {
         let px = glyph_pixels(self.size, self.dot, self.outline, self.zz);
         make_icon(&px, self.size)
@@ -337,18 +349,27 @@ impl Tray {
         let redraw = (key.dot, key.outline, key.zz, key.size)
             != (self.key.dot, self.key.outline, self.key.zz, self.key.size);
         // The shell keeps its own copy, so the old icon goes once replaced.
-        let retired = if redraw {
-            key.icon()
-                .inspect_err(|e| log::warn!("tray: cannot draw icon ({e}); keeping the old one"))
-                .ok()
-                .map(|icon| std::mem::replace(&mut self.icon, icon))
+        let mut retired = None;
+        let key = if redraw {
+            match key.icon() {
+                Ok(icon) => {
+                    retired = Some(std::mem::replace(&mut self.icon, icon));
+                    key
+                }
+                Err(e) => {
+                    log::warn!("tray: cannot draw icon ({e}); retrying next update");
+                    key.after_failed_redraw(&self.key)
+                }
+            }
         } else {
-            None
+            key
         };
         self.key = key;
         if self.added {
             if !self.notify(NIM_MODIFY) {
-                log::warn!("tray: NIM_MODIFY failed");
+                // Explorer lost the icon: re-add on the next update.
+                log::warn!("tray: NIM_MODIFY failed; will re-add");
+                self.added = false;
             }
         } else {
             self.readd();
@@ -357,8 +378,10 @@ impl Tray {
     }
 
     /// (Re-)adds the icon — after `TaskbarCreated` (Explorer restarted).
+    /// A refused `NIM_ADD` (the icon survived, e.g. a duplicate
+    /// `TaskbarCreated`) falls back to `NIM_MODIFY`.
     pub fn readd(&mut self) {
-        self.added = self.notify(NIM_ADD);
+        self.added = self.notify(NIM_ADD) || self.notify(NIM_MODIFY);
         if !self.added {
             log::warn!("tray: NIM_ADD failed; retrying on TaskbarCreated / next update");
             return;
@@ -542,6 +565,43 @@ mod tests {
             decode(0, NIN_KEYSELECT as isize, 0, &mut d),
             Some(TrayAction::Click)
         );
+    }
+
+    #[test]
+    fn keyboard_select_is_deduped_like_the_mouse() {
+        const KEY: isize = NIN_KEYSELECT as isize;
+        let mut d = ClickDedupe::default();
+        // Enter reports NIN_KEYSELECT twice; one toggle.
+        assert_eq!(decode(0, KEY, 1_000, &mut d), Some(TrayAction::Click));
+        assert_eq!(decode(0, KEY, 1_020, &mut d), None);
+        // A key select right after a mouse click is the same activation.
+        assert_eq!(decode(0, UP, 5_000, &mut d), Some(TrayAction::Click));
+        assert_eq!(decode(0, KEY, 5_010, &mut d), None);
+        // Slow repeats count.
+        assert_eq!(decode(0, KEY, 9_000, &mut d), Some(TrayAction::Click));
+        assert_eq!(
+            decode(0, KEY, 9_000 + DEDUPE_MS, &mut d),
+            Some(TrayAction::Click)
+        );
+    }
+
+    fn key(dot: Rgb, zz: bool, tip: &str) -> IconKey {
+        IconKey {
+            dot,
+            outline: INK,
+            zz,
+            size: 16,
+            tip: tip.into(),
+        }
+    }
+
+    #[test]
+    fn failed_redraw_keeps_old_visuals_so_it_retries() {
+        let old = key(INK, false, "old");
+        let new = key(DOT, true, "new");
+        let kept = new.clone().after_failed_redraw(&old);
+        assert_eq!(kept, key(INK, false, "new"));
+        assert_ne!(kept, new, "next update sees a change and redraws");
     }
 
     /// Renders the glyph at 32 px into `./tmp/tray-*.bmp` for eyeballing.

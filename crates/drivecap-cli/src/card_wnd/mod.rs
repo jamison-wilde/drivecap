@@ -169,6 +169,7 @@ pub struct AppState {
     tray: Option<Tray>,
     /// The open popup window, once created.
     popup: Option<popups::PopupWin>,
+    modal: shell::ModalState,
     deferred: Vec<WinOp>,
 }
 
@@ -229,6 +230,7 @@ impl AppState {
             drag: None,
             tray: None,
             popup: None,
+            modal: shell::ModalState::default(),
             deferred: Vec::new(),
         })
     }
