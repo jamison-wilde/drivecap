@@ -101,13 +101,13 @@ Per-user MSI (no UAC) installs to `%LOCALAPPDATA%\Drivecap\`, writes the Run key
 - **DPI**: the PerMonitorV2 manifest in `build.rs` is applied before any user code runs. All UI pixel values pass through `theme::scale(px, dpi)` (× `config.scale_pct / 100`) — no hardcoded pixels.
 - **Dark mode**: all colours come from the light/dark palette, chosen by `theme::read_dark_mode()` — never assume dark. The read is uncached so a theme switch repaints correctly; read it once per repaint, not per element.
 - **State directory**: persisted state lives under `~/.drivecap/` (`config.json`, `position.json`); the log is `%TEMP%\drivecap.log`. Don't add state files elsewhere.
-- **`WM_CLOSE` is the shutdown path**: the MSI's `util:CloseApplication` sends `WM_CLOSE` to the card and kills the process 500 ms later. `WM_CLOSE` and `Effect::Quit` share one handler (save `position.json`, `DestroyWindow`, `WM_DESTROY` → `PostQuitMessage(0)`) — keep it fast and never prompt or block in it.
+- **`WM_CLOSE` is the shutdown path**: the MSI's `util:CloseApplication` sends `WM_CLOSE` to the card, waits up to `Timeout` (unset → the 5 s default) for it to exit, then terminates it — `TerminateProcess="500"` is the exit code given to `TerminateProcess`, not a wait in ms. `WM_CLOSE` and `Effect::Quit` share one handler (save `position.json`, `DestroyWindow`, `WM_DESTROY` → `PostQuitMessage(0)`) — keep it fast and never prompt or block in it.
 - **Card state re-entrancy**: `card_wnd`'s `AppState` is a `RefCell` in `GWLP_USERDATA`, reached only via `with_state`. Calls that re-enter the wndproc with handled messages (`ShowWindow`, `SetCapture`/`ReleaseCapture`, `DestroyWindow`, `ShellExecuteW`, `TrackPopupMenu`, `ChooseFontW`) go through a deferred `WinOp`, never inline while the state is borrowed.
 - **Never reuse exbar's UpgradeCode**: drivecap's MSI UpgradeCode is `F04B1403-DE21-41D0-9AB5-3C30AA482CAD`, fixed forever. Reusing exbar's would make one product's installer uninstall the other.
 
 ## Logging
 
-All logs go to `%TEMP%\drivecap.log` with format `HH:MM:SS.mmm [LEVEL] pid=N message` (UTC). First diagnostic tool when something misbehaves:
+All logs go to `%TEMP%\drivecap.log` with format `HH:MM:SS.mmm [LEVEL] pid=N message` (UTC). At startup a log over 5 MB is renamed to `drivecap.log.1` (replacing the old one). Each poll is one info line with its timing (`poll C:\ 42us: 120 GB`, network results tagged `(network)`). First diagnostic tool when something misbehaves:
 
 ```bash
 cat "$TEMP/drivecap.log"
@@ -126,10 +126,10 @@ The MSI:
 
 WiX v7 install (one-time per machine):
 ```
-dotnet tool install --global wix
+dotnet tool install --global wix --version 7.*
 wix eula accept wix7
-wix extension add --global WixToolset.Util.wixext
-wix extension add --global WixToolset.UI.wixext
+wix extension add --global WixToolset.Util.wixext/7.0.0
+wix extension add --global WixToolset.UI.wixext/7.0.0
 ```
 
 ## Adding a new feature

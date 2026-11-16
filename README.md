@@ -3,11 +3,13 @@
 Drivecap is a small Windows tray app that warns you before a drive fills
 up. Build trees, worktrees and package caches quietly eat disk space
 until a build fails; drivecap watches your volumes and shows a small,
-always-on-top card — one that never steals focus or eats clicks — when
-free space drops below a threshold and again at each step below it,
-escalating as space gets tight and staying put when a drive is nearly
-full. Re-crossing a level you were already warned about stays quiet,
-and any warning can be snoozed.
+always-on-top card — one that never steals focus and never eats clicks
+while idle — when free space drops below a threshold and again at each
+step below it, escalating as space gets tight and staying put when a
+drive is nearly full. Re-crossing a level you were already warned about
+stays quiet, and any warning can be snoozed. A dire card is interactive
+by design: it stays clickable (snooze, drag, menus) for as long as a
+drive is dire and not snoozed, instead of turning click-through.
 
 ## Install
 
@@ -26,12 +28,14 @@ written with defaults on first run: per volume, warn at 20 GB free, then
 every 5 GB below that, dire at 2 GB. Edit it by hand or via the tray
 menu's **Edit config.json**; drivecap picks up changes automatically.
 The card's position is saved in `~/.drivecap/position.json`. Logs go
-to `%TEMP%\drivecap.log`.
+to `%TEMP%\drivecap.log`; at startup a log over 5 MB moves to
+`drivecap.log.1`, replacing the previous one.
 
 ## Using it
 
 - The tray icon is always present while drivecap runs, coloured by the
-  worst drive; hover it for the lowest free space.
+  worst drive; hover it for the worst at-risk drive's free space (or
+  "all drives healthy").
 - **Left-click** the tray icon to show the card (expanded); click again
   to hide it.
 - **Right-click** the tray icon (or the card) for Snooze, Volumes, Font,
@@ -43,6 +47,11 @@ to `%TEMP%\drivecap.log`.
   and the chevron switches between all drives and warned drives only.
 - Each warning row has its own **Zz** to snooze just that drive. A new
   level crossing, or a drive going dire, breaks through any snooze.
+- **Hide this volume** (right-click a row) stops watching it. Lettered
+  drives come back via **Volumes ▸**; network folders and mount points
+  from `extraPaths` are not listed there, so un-hide one by deleting its
+  `"enabled": false` entry under `volumes` in `config.json` (or setting
+  it to `true`).
 
 `drivecap status` prints the watched volumes and their free space.
 
