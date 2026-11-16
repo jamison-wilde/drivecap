@@ -37,9 +37,10 @@
 //! **Win32 adapters:**
 //! - [`volumes`] — volume enumeration (GUID, label, USB bus), pure
 //!   selection rules, local free-space query.
+//! - [`net_probe`] — worker-thread network free-space probe (3 s budget).
 //!
-//! The remaining pure cores (controller, menu) and Win32 adapters
-//! (net probe, paint, card window, tray, popups) land in later
+//! The remaining pure core (menu) and Win32 adapters
+//! (paint, card window, tray, popups) land in later
 //! tasks; `CLAUDE.md` lists the planned set.
 //!
 //! ## Where to read next
@@ -55,6 +56,7 @@ pub mod error;
 pub mod layout;
 pub mod log;
 pub mod model;
+pub mod net_probe;
 pub mod palette;
 pub mod paths;
 pub mod position;
