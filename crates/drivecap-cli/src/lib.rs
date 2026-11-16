@@ -25,7 +25,10 @@
 //! - [`clock`] — [`clock::Clock`] time-source seam.
 //! - [`paths`] — `~/.drivecap/` state layout.
 //!
-//! The pure cores (config, alerts, model, visibility, layout, controller,
+//! **Pure cores:**
+//! - [`config`] — `config.json` schema, defaults, clamping, safe load/save.
+//!
+//! The remaining pure cores (alerts, model, visibility, layout, controller,
 //! menu) and Win32 adapters (volumes, net probe, paint, card window,
 //! tray, popups) land in later tasks; `CLAUDE.md` lists the planned set.
 //!
@@ -36,6 +39,7 @@
 //!   `windows = 0.61` quirks.
 
 pub mod clock;
+pub mod config;
 pub mod error;
 pub mod log;
 pub mod paths;
