@@ -4,10 +4,15 @@
 //! Messages below the configured filter are not formatted, keeping
 //! hot-path cost minimal when verbose logging is off. Output goes to
 //! `%TEMP%\drivecap.log`, one line per record:
-//! `HH:MM:SS.mmm [LEVEL] pid=N message`.
+//! `HH:MM:SS.mmm [LEVEL] pid=N message`. At startup a log over
+//! [`MAX_LOG_BYTES`] is moved to `drivecap.log.1` (replacing the previous
+//! one), so the pair never exceeds about twice the limit per run.
 
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Size past which [`init`] rotates the log to `drivecap.log.1`.
+pub const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Log verbosity. Parsed from the `--log-level` CLI flag (lowercase
 /// names) and mapped onto [`log::LevelFilter`] by [`init`].
@@ -75,8 +80,28 @@ static FILE_LOGGER: FileLogger = FileLogger;
 /// Idempotent: a second call only updates the level (`log::set_logger`
 /// errors are ignored because it fails only if a logger is already set).
 pub fn init(level: LogLevel) {
+    let rotated = rotate_if_large(&log_path(), MAX_LOG_BYTES);
     let _ = log::set_logger(&FILE_LOGGER);
     log::set_max_level(level.to_filter());
+    if rotated {
+        log::info!("log: rotated the previous log to drivecap.log.1");
+    }
+}
+
+/// Moves `path` to `<path>.1` (replacing it) when `path` is larger than
+/// `max_bytes`. Returns whether it rotated; a missing file or a failed
+/// rename (another process writing) leaves the log where it is.
+fn rotate_if_large(path: &Path, max_bytes: u64) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() <= max_bytes {
+        return false;
+    }
+    let mut old = path.as_os_str().to_owned();
+    old.push(".1");
+    // std::fs::rename replaces an existing target on Windows.
+    std::fs::rename(path, PathBuf::from(old)).is_ok()
 }
 
 fn format_level(level: log::Level) -> &'static str {
@@ -184,5 +209,38 @@ mod tests {
     fn timestamp_formats_time_of_day() {
         // 1 day + 01:02:03 → day part dropped.
         assert_eq!(format_timestamp(86400 + 3723, 45), "01:02:03.045");
+    }
+
+    #[test]
+    fn oversized_log_rotates_to_dot_1_replacing_the_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("drivecap.log");
+        let old = dir.path().join("drivecap.log.1");
+        std::fs::write(&log, vec![b'x'; 11]).unwrap();
+        std::fs::write(&old, b"stale").unwrap();
+        assert!(rotate_if_large(&log, 10));
+        assert!(!log.exists());
+        assert_eq!(std::fs::read(&old).unwrap().len(), 11);
+    }
+
+    #[test]
+    fn log_at_or_under_the_limit_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("drivecap.log");
+        std::fs::write(&log, vec![b'x'; 10]).unwrap();
+        assert!(!rotate_if_large(&log, 10));
+        assert!(log.exists());
+        assert!(!dir.path().join("drivecap.log.1").exists());
+    }
+
+    #[test]
+    fn missing_log_is_not_rotated() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!rotate_if_large(&dir.path().join("drivecap.log"), 10));
+    }
+
+    #[test]
+    fn rotation_limit_is_5_mb() {
+        assert_eq!(MAX_LOG_BYTES, 5 * 1024 * 1024);
     }
 }

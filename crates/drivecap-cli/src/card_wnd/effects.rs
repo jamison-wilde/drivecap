@@ -37,12 +37,12 @@ pub fn apply_effects(hwnd: HWND, st: &mut AppState, effects: Vec<Effect>) {
     while let Some(effect) = queue.pop_front() {
         match effect {
             Effect::PollLocal { id, root } => {
-                let free = volumes::query_free(&root);
-                log::info!("poll {root}: {}", free_text(free));
+                let (free, took) = volumes::query_free_timed(&root);
+                log::info!("{}", poll_line(&root, took.as_micros(), free, false));
                 queue.extend(feed(st, Input::Sample { id, free }));
             }
             Effect::PollNetwork { id, root } => {
-                log::info!("poll {root}: queued to the network probe");
+                log::debug!("poll {root}: queued to the network probe");
                 st.probe.request(id, root);
             }
             Effect::Rescan => queue.extend(rescan(st)),
@@ -118,8 +118,8 @@ pub(super) fn drain_probe(hwnd: HWND, st: &mut AppState) {
 
 fn probe_samples(st: &mut AppState) -> Vec<Effect> {
     let mut fx = Vec::new();
-    for (id, free) in st.probe.drain() {
-        log::info!("poll {}: {} (network)", id.0, free_text(free));
+    for (id, free, took) in st.probe.drain() {
+        log::info!("{}", poll_line(&id.0, took.as_micros(), free, true));
         fx.extend(feed(st, Input::Sample { id, free }));
     }
     fx
@@ -220,8 +220,12 @@ pub(super) fn mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-fn free_text(free: Option<u64>) -> String {
-    free.map_or_else(|| "unreachable".to_owned(), crate::model::format_free)
+/// The one info line per poll: `poll <root> <µs>us: <free>`, with
+/// `(network)` for probe results (timed on the worker thread).
+fn poll_line(root: &str, us: u128, free: Option<u64>, network: bool) -> String {
+    let free = free.map_or_else(|| "unreachable".to_owned(), crate::model::format_free);
+    let net = if network { " (network)" } else { "" };
+    format!("poll {root} {us}us: {free}{net}")
 }
 
 /// Opens `config.json` with its associated editor, else Notepad. Runs as a
@@ -260,6 +264,25 @@ pub(super) fn open_config(hwnd: HWND, path: &Path) {
             "config: could not open {} (ShellExecuteW {})",
             path.display(),
             r.0 as isize
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_poll_logs_one_line_with_its_timing() {
+        let free = Some(3 * crate::config::GIB);
+        assert_eq!(poll_line(r"C:\", 42, free, false), r"poll C:\ 42us: 3.0 GB");
+    }
+
+    #[test]
+    fn network_poll_line_is_marked_and_names_failures() {
+        assert_eq!(
+            poll_line(r"\\nas\b", 3_000_000, None, true),
+            r"poll \\nas\b 3000000us: unreachable (network)"
         );
     }
 }

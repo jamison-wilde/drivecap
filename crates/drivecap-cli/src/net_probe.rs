@@ -15,7 +15,7 @@ use crate::volumes;
 use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Default per-probe wall-clock budget.
 pub const DEFAULT_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -101,11 +101,15 @@ impl Drop for BusyGuard {
     }
 }
 
+/// One finished probe: the volume, its free bytes (`None` = unreachable)
+/// and how long the probe took, for the single poll log line.
+pub type ProbeResult = (VolumeId, Option<u64>, Duration);
+
 /// Long-lived worker thread that runs probes one at a time and reports
 /// results back to the UI thread.
 pub struct ProbeWorker {
     tx: Sender<(VolumeId, String)>,
-    rx: Receiver<(VolumeId, Option<u64>)>,
+    rx: Receiver<ProbeResult>,
     in_flight: HashSet<VolumeId>,
     /// The worker thread's death has been logged.
     dead_logged: bool,
@@ -121,8 +125,9 @@ impl ProbeWorker {
         let (res_tx, res_rx) = mpsc::channel();
         std::thread::spawn(move || {
             while let Ok((id, root)) = req_rx.recv() {
+                let start = Instant::now();
                 let free = probe.probe(&root);
-                if res_tx.send((id, free)).is_err() {
+                if res_tx.send((id, free, start.elapsed())).is_err() {
                     return;
                 }
                 notify();
@@ -149,7 +154,7 @@ impl ProbeWorker {
     }
 
     /// Results ready so far (non-blocking); clears their in-flight marks.
-    pub fn drain(&mut self) -> Vec<(VolumeId, Option<u64>)> {
+    pub fn drain(&mut self) -> Vec<ProbeResult> {
         let mut out = Vec::new();
         loop {
             match self.rx.try_recv() {
@@ -161,7 +166,7 @@ impl ProbeWorker {
                 }
             }
         }
-        for (id, _) in &out {
+        for (id, _, _) in &out {
             self.in_flight.remove(id);
         }
         out
@@ -183,7 +188,6 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::time::Instant;
 
     #[derive(Default)]
     struct MockProbe {
@@ -211,7 +215,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut out = Vec::new();
         while out.len() < n && Instant::now() < deadline {
-            out.extend(w.drain());
+            out.extend(w.drain().into_iter().map(|(id, free, _)| (id, free)));
             std::thread::sleep(Duration::from_millis(5));
         }
         out
@@ -264,6 +268,24 @@ mod tests {
         // Once drained, the id may be requested again.
         w.request(id("a"), "A".into());
         assert_eq!(drain_n(&mut w, 1).len(), 1);
+    }
+
+    #[test]
+    fn result_carries_the_probe_duration() {
+        let probe = MockProbe {
+            delay: Some(Duration::from_millis(60)),
+            ..MockProbe::default()
+        };
+        let mut w = ProbeWorker::spawn(Box::new(probe), Box::new(|| {}));
+        w.request(id("a"), "A".into());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut got = Vec::new();
+        while got.is_empty() && Instant::now() < deadline {
+            got = w.drain();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(got.len(), 1);
+        assert!(got[0].2 >= Duration::from_millis(60), "{:?}", got[0].2);
     }
 
     fn slow_query(_root: &str) -> Option<u64> {

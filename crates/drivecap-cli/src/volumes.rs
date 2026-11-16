@@ -10,7 +10,7 @@
 //! and are keyed by [`normalize_network`] of their path.
 
 use std::collections::HashSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
@@ -439,20 +439,23 @@ fn query_bus(handle: HANDLE, device: &str) -> Bus {
 /// `None` when the query fails. Blocks for network paths — call those off
 /// the UI thread.
 pub fn query_free(root: &str) -> Option<u64> {
+    query_free_timed(root).0
+}
+
+/// [`query_free`] plus how long the query took, for the caller's single
+/// info poll line. A failure adds a debug line with the OS error.
+pub fn query_free_timed(root: &str) -> (Option<u64>, Duration) {
     let w = wide(root);
     let mut free = 0u64;
     let start = Instant::now();
     // SAFETY: `w` is NUL-terminated; `free` is a valid out pointer.
     let res = unsafe { GetDiskFreeSpaceExW(PCWSTR(w.as_ptr()), Some(&mut free), None, None) };
-    let us = start.elapsed().as_micros();
+    let took = start.elapsed();
     match res {
-        Ok(()) => {
-            log::debug!("poll {root} {us}us free={free}");
-            Some(free)
-        }
+        Ok(()) => (Some(free), took),
         Err(e) => {
-            log::debug!("poll {root} {us}us failed: {e}");
-            None
+            log::debug!("poll {root}: query failed: {e}");
+            (None, took)
         }
     }
 }
