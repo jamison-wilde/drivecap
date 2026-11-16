@@ -34,8 +34,12 @@
 //! - [`layout`] — card geometry, DPI metrics, hit testing, popup anchors.
 //! - [`position`] — per-monitor position store, work-area clamping, resize anchoring.
 //!
+//! **Win32 adapters:**
+//! - [`volumes`] — volume enumeration (GUID, label, USB bus), pure
+//!   selection rules, local free-space query.
+//!
 //! The remaining pure cores (controller, menu) and Win32 adapters
-//! (volumes, net probe, paint, card window, tray, popups) land in later
+//! (net probe, paint, card window, tray, popups) land in later
 //! tasks; `CLAUDE.md` lists the planned set.
 //!
 //! ## Where to read next
@@ -56,3 +60,4 @@ pub mod paths;
 pub mod position;
 pub mod theme;
 pub mod visibility;
+pub mod volumes;

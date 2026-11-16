@@ -22,9 +22,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use clap::{Parser, Subcommand};
-use windows::Win32::System::Console::FreeConsole;
+use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, FreeConsole};
 
+use drivecap_cli::alerts::{Zone, zone_for};
+use drivecap_cli::config::Config;
 use drivecap_cli::log::{self as drivecap_log, LogLevel};
+use drivecap_cli::model::format_free;
+use drivecap_cli::paths;
+use drivecap_cli::volumes::{self, VolumeSource, Win32Volumes};
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -71,7 +76,40 @@ fn run(level: LogLevel) {
     // Message pump arrives with the card window (Task 12).
 }
 
+/// Diagnostic table: watched volumes (`letter  label  free  zone  id`),
+/// then connected volumes that are not watched. Network extras are
+/// queried inline — a one-shot CLI may block on a dead share.
 fn status() {
-    // Volume enumeration arrives with the volumes module (Task 8).
-    println!("status: not implemented");
+    // Release builds are Windows-subsystem; borrow the launching
+    // terminal's console so `println!` lands there. Ignored: fails when
+    // already attached or launched without a console.
+    // SAFETY: no pointers; only changes this process's console attachment.
+    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    let cfg = Config::load(&paths::config_path()).config;
+    let source = Win32Volumes;
+    let connected = source.connected();
+    let extras: Vec<_> = cfg
+        .extra_paths
+        .iter()
+        .filter_map(|p| source.resolve_path(p))
+        .collect();
+    let watched = volumes::select(&connected, &extras, &cfg);
+    for v in &watched {
+        let (free, zone) = match volumes::query_free(&v.root) {
+            Some(bytes) => (format_free(bytes), zone_for(bytes, &cfg.rule_for(&v.id))),
+            None => ("?".to_string(), Zone::Unreachable),
+        };
+        print_row(&v.letter, &v.label, &free, &format!("{zone:?}"), &v.id.0);
+    }
+    for r in connected
+        .iter()
+        .filter(|r| !watched.iter().any(|w| w.id == r.id))
+    {
+        let free = volumes::query_free(&r.root).map_or_else(|| "?".to_string(), format_free);
+        print_row(&r.letter, &r.label, &free, "(not watched)", &r.id.0);
+    }
+}
+
+fn print_row(letter: &str, label: &str, free: &str, zone: &str, id: &str) {
+    println!("{letter:<3} {label:<20} {free:>9}  {zone:<13} {id}");
 }
