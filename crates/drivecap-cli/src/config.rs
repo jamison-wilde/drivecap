@@ -16,6 +16,15 @@ use std::path::Path;
 /// One gibibyte. "GB" in config and UI means GiB, matching Explorer.
 pub const GIB: u64 = 1 << 30;
 
+/// Largest accepted rule value in GiB (1 PiB); larger values are invalid.
+pub const MAX_GB: f64 = 1e6;
+/// Smallest accepted step in GiB.
+pub const MIN_STEP_GB: f64 = 0.01;
+/// Ceiling for every seconds-valued setting (one day).
+pub const MAX_SECS: u64 = 86_400;
+/// Ceiling for every millisecond animation timing (one hour).
+pub const MAX_MS: u64 = 3_600_000;
+
 /// Stable volume key: `\\?\Volume{guid}\` for local volumes, or the
 /// lowercase network path without a trailing `\`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -108,6 +117,27 @@ pub struct Timings {
     pub unreachable_drop_secs: u64,
 }
 
+impl Timings {
+    /// Caps every value so the engine's ms arithmetic cannot overflow.
+    fn clamp(&mut self) {
+        for ms in [
+            &mut self.fade_in_ms,
+            &mut self.hold_ms,
+            &mut self.crossing_hold_ms,
+            &mut self.fade_out_ms,
+            &mut self.linger_ms,
+            &mut self.hover_rest_ms,
+        ] {
+            *ms = (*ms).min(MAX_MS);
+        }
+        self.unreachable_drop_secs = self.unreachable_drop_secs.min(MAX_SECS);
+        self.reminder_min_secs = self.reminder_min_secs.clamp(1, MAX_SECS);
+        self.reminder_max_secs = self
+            .reminder_max_secs
+            .clamp(self.reminder_min_secs, MAX_SECS);
+    }
+}
+
 impl Default for Timings {
     fn default() -> Self {
         Timings {
@@ -165,7 +195,16 @@ impl RuleGb {
         let finite = [self.threshold_gb, self.step_gb, self.dire_gb]
             .iter()
             .all(|v| v.is_finite());
-        finite && self.step_gb > 0.0 && self.dire_gb >= 0.0 && self.dire_gb < self.threshold_gb
+        let in_range = self.step_gb >= MIN_STEP_GB
+            && self.step_gb <= MAX_GB
+            && self.threshold_gb <= MAX_GB
+            && self.dire_gb >= 0.0
+            && self.dire_gb < self.threshold_gb;
+        // Re-check after the byte conversion truncates.
+        finite && in_range && {
+            let r = self.to_bytes();
+            r.step > 0 && r.dire < r.threshold
+        }
     }
 
     fn to_bytes(self) -> Rule {
@@ -355,7 +394,10 @@ impl Config {
         tmp.push(".tmp");
         let tmp = std::path::PathBuf::from(tmp);
         std::fs::write(&tmp, self.to_json_string()).map_err(|e| DrivecapError::io(&tmp, e))?;
-        std::fs::rename(&tmp, path).map_err(|e| DrivecapError::io(path, e))
+        std::fs::rename(&tmp, path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            DrivecapError::io(path, e)
+        })
     }
 
     /// The validated rule for `id`: entry fields override
@@ -409,13 +451,11 @@ impl Config {
 
     /// Clamps ranges and replaces invalid rules/colours, warning once each.
     fn normalize(&mut self) {
-        self.poll_interval_secs = self.poll_interval_secs.max(1);
+        self.poll_interval_secs = self.poll_interval_secs.clamp(1, MAX_SECS);
         let pct = (u32::from(self.idle_opacity_pct) + 2) / 5 * 5;
         self.idle_opacity_pct = pct.clamp(20, 100) as u8;
         self.scale_pct = self.scale_pct.clamp(50, 300);
-        let t = &mut self.timings;
-        t.reminder_min_secs = t.reminder_min_secs.max(1);
-        t.reminder_max_secs = t.reminder_max_secs.max(t.reminder_min_secs);
+        self.timings.clamp();
         if !self.defaults.is_valid() {
             log::warn!(
                 "config: invalid defaults {:?}; using 20/5/2 GB",
@@ -657,5 +697,58 @@ mod tests {
         .unwrap();
         assert_eq!(c.colors.light.warning, None);
         assert_eq!(c.colors.light.dire.as_deref(), Some("#112233"));
+    }
+
+    #[test]
+    fn tiny_step_is_invalid() {
+        let c = Config::from_json_str(r#"{"volumes":[{"id":"X","stepGb":1e-10}]}"#).unwrap();
+        assert_eq!(
+            c.rule_for(&id("X")),
+            Config::default().rule_for(&id("none"))
+        );
+        let c = Config::from_json_str(r#"{"defaults":{"stepGb":1e-10}}"#).unwrap();
+        assert_eq!(c.defaults, RuleGb::default());
+    }
+
+    #[test]
+    fn huge_rule_values_are_invalid() {
+        let c = Config::from_json_str(
+            r#"{"volumes":[{"id":"A","thresholdGb":1e12},{"id":"B","stepGb":1e12}]}"#,
+        )
+        .unwrap();
+        let d = Config::default().rule_for(&id("none"));
+        assert_eq!(c.rule_for(&id("A")), d);
+        assert_eq!(c.rule_for(&id("B")), d);
+    }
+
+    #[test]
+    fn huge_timings_are_clamped() {
+        let c = Config::from_json_str(
+            r#"{"pollIntervalSecs":18446744073709551615,"timings":{
+                "reminderMaxSecs":18446744073709551615,"reminderMinSecs":18446744073709551615,
+                "unreachableDropSecs":18446744073709551615,"holdMs":18446744073709551615}}"#,
+        )
+        .unwrap();
+        let t = &c.timings;
+        assert_eq!(c.poll_interval_secs, MAX_SECS);
+        assert_eq!(
+            (
+                t.reminder_max_secs,
+                t.reminder_min_secs,
+                t.unreachable_drop_secs
+            ),
+            (MAX_SECS, MAX_SECS, MAX_SECS)
+        );
+        assert_eq!(t.hold_ms, MAX_MS);
+    }
+
+    #[test]
+    fn failed_rename_removes_tmp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("keep"), "x").unwrap();
+        assert!(Config::default().save(&path).is_err());
+        assert!(!dir.path().join("config.json.tmp").exists());
     }
 }

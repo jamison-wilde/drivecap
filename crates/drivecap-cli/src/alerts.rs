@@ -114,8 +114,11 @@ pub fn zone_for(free: u64, rule: &Rule) -> Zone {
 /// Reminder interval: linear from `reminder_max_secs` at the threshold to
 /// `reminder_min_secs` at dire, clamped outside that range.
 pub fn reminder_interval_ms(free: u64, rule: &Rule, t: &Timings) -> u64 {
-    let max = t.reminder_max_secs * 1000;
-    let min = t.reminder_min_secs.min(t.reminder_max_secs) * 1000;
+    let max = t.reminder_max_secs.saturating_mul(1000);
+    let min = t
+        .reminder_min_secs
+        .min(t.reminder_max_secs)
+        .saturating_mul(1000);
     if free >= rule.threshold {
         return max;
     }
@@ -163,9 +166,21 @@ impl VolumeAlert {
         if event.is_some() {
             self.snooze = Snooze::Off;
         }
+        if self.zone == Zone::Dire && self.snooze == Snooze::NextLevel {
+            // Re-entering dire without a fresh EnteredDire (not yet re-armed)
+            // must still cap a "next level" snooze to a timed one.
+            self.snooze(SnoozeChoice::NextLevel, now);
+        }
         if self.zone == Zone::Warning {
             self.interval_ms = reminder_interval_ms(free, rule, t);
-            self.next_reminder_at.get_or_insert(now + self.interval_ms);
+            let next = now.saturating_add(self.interval_ms);
+            if event.is_some() {
+                // The break-through just showed the surface; a reminder
+                // right behind it would be redundant.
+                self.next_reminder_at = Some(next);
+            } else {
+                self.next_reminder_at.get_or_insert(next);
+            }
         } else {
             self.next_reminder_at = None;
         }
@@ -202,7 +217,7 @@ impl VolumeAlert {
         };
         self.snooze = match choice.duration_ms() {
             Some(d) => Snooze::Until {
-                at_ms: now + d,
+                at_ms: now.saturating_add(d),
                 choice,
             },
             None => Snooze::NextLevel,
@@ -213,7 +228,7 @@ impl VolumeAlert {
     pub fn wake(&mut self, now: u64) {
         self.snooze = Snooze::Off;
         if self.zone == Zone::Warning {
-            self.next_reminder_at = Some(now + self.interval_ms);
+            self.next_reminder_at = Some(now.saturating_add(self.interval_ms));
         }
     }
 
@@ -238,17 +253,17 @@ impl VolumeAlert {
             && let Some(free) = self.free
         {
             self.interval_ms = reminder_interval_ms(free, rule, t);
-            self.next_reminder_at = Some(now + self.interval_ms);
+            self.next_reminder_at = Some(now.saturating_add(self.interval_ms));
         }
     }
 
     /// Poll cadence: base for healthy/unreachable, the reminder scale in
     /// warning, `reminder_min_secs` when dire — never slower than base.
     pub fn poll_interval_ms(&self, rule: &Rule, base_secs: u64, t: &Timings) -> u64 {
-        let base = base_secs.max(1) * 1000;
+        let base = base_secs.max(1).saturating_mul(1000);
         match (self.zone, self.free) {
             (Zone::Warning, Some(free)) => base.min(reminder_interval_ms(free, rule, t)),
-            (Zone::Dire, _) => base.min(t.reminder_min_secs.max(1) * 1000),
+            (Zone::Dire, _) => base.min(t.reminder_min_secs.max(1).saturating_mul(1000)),
             _ => base,
         }
     }
@@ -260,9 +275,9 @@ impl VolumeAlert {
             return !self.is_snoozed(now);
         }
         self.zone == Zone::Unreachable
-            && self
-                .unreachable_since
-                .is_some_and(|since| now.saturating_sub(since) < t.unreachable_drop_secs * 1000)
+            && self.unreachable_since.is_some_and(|since| {
+                now.saturating_sub(since) < t.unreachable_drop_secs.saturating_mul(1000)
+            })
     }
 
     fn observe_unreachable(&mut self, now: u64) -> Option<AlertEvent> {
@@ -279,12 +294,13 @@ impl VolumeAlert {
     /// Applies the re-arm rule for a rise in free space.
     fn rearm(&mut self, free: u64, rule: &Rule) {
         while let Some(l) = self.last_warned
-            && free > l + rule.step
+            && free > l.saturating_add(rule.step)
         {
-            let up = l + rule.step;
-            self.last_warned = (up <= rule.threshold).then_some(up);
+            // step == 0 (degenerate rule) clears instead of looping forever.
+            let up = l.saturating_add(rule.step);
+            self.last_warned = (rule.step > 0 && up <= rule.threshold).then_some(up);
         }
-        if free > rule.dire + rule.step {
+        if free > rule.dire.saturating_add(rule.step) {
             self.dire_warned = false;
         }
     }
@@ -595,5 +611,79 @@ mod tests {
         assert_eq!(a.poll_interval_ms(&r, 5, &t()), 5_000);
         obs(&mut a, 1.0);
         assert_eq!(a.poll_interval_ms(&r, 60, &t()), 10_000);
+    }
+
+    #[test]
+    fn zero_step_rule_does_not_hang() {
+        let r = Rule { step: 0, ..rule() };
+        let mut a = VolumeAlert::default();
+        assert_eq!(levels(&r), vec![20 * GIB]);
+        assert_eq!(
+            a.observe(Sample::Free(gb(14.0)), &r, 0, &t()),
+            Some(AlertEvent::Crossing)
+        );
+        assert_eq!(a.observe(Sample::Free(gb(30.0)), &r, 0, &t()), None);
+        assert_eq!(
+            a.observe(Sample::Free(gb(14.0)), &r, 0, &t()),
+            Some(AlertEvent::Crossing)
+        );
+    }
+
+    #[test]
+    fn huge_values_do_not_overflow() {
+        let r = Rule {
+            threshold: u64::MAX - 1,
+            step: u64::MAX / 2,
+            dire: 0,
+        };
+        let big = Timings {
+            reminder_max_secs: u64::MAX,
+            reminder_min_secs: u64::MAX,
+            unreachable_drop_secs: u64::MAX,
+            ..Timings::default()
+        };
+        let now = u64::MAX - 10;
+        let mut a = VolumeAlert::default();
+        a.observe(Sample::Free(u64::MAX - 5), &r, now, &big);
+        a.observe(Sample::Free(u64::MAX / 2 + 1), &r, now, &big);
+        a.observe(Sample::Free(u64::MAX), &r, now, &big);
+        a.observe(Sample::Free(1), &r, now, &big);
+        a.tick(&r, u64::MAX, &big);
+        a.snooze(SnoozeChoice::OneHour, now);
+        a.wake(now);
+        a.reminder_shown(&r, now, &big);
+        let _ = a.poll_interval_ms(&r, u64::MAX, &big);
+        let _ = reminder_interval_ms(1, &r, &big);
+        a.observe(Sample::Unreachable, &r, 0, &big);
+        assert!(a.show_in_minimized(1_000, &big));
+    }
+
+    #[test]
+    fn dire_reentry_with_next_level_snooze_becomes_timed() {
+        let mut a = VolumeAlert::default();
+        obs(&mut a, 6.0);
+        obs(&mut a, 1.5);
+        obs(&mut a, 2.5);
+        a.snooze(SnoozeChoice::NextLevel, 0);
+        assert_eq!(a.snooze, Snooze::NextLevel);
+        assert_eq!(a.observe(Sample::Free(gb(1.9)), &rule(), 1_000, &t()), None);
+        assert_eq!(
+            a.snooze,
+            Snooze::Until {
+                at_ms: 601_000,
+                choice: SnoozeChoice::TenMin
+            }
+        );
+    }
+
+    #[test]
+    fn break_through_reschedules_reminder() {
+        let mut a = VolumeAlert::default();
+        assert_eq!(obs(&mut a, 11.0), Some(AlertEvent::Crossing));
+        let ev = a.observe(Sample::Free(gb(9.0)), &rule(), 30_000, &t());
+        assert_eq!(ev, Some(AlertEvent::Crossing));
+        let next = 30_000 + reminder_interval_ms(gb(9.0), &rule(), &t());
+        assert_eq!(a.tick(&rule(), 35_000, &t()), None);
+        assert_eq!(a.tick(&rule(), next, &t()), Some(AlertEvent::Reminder));
     }
 }
