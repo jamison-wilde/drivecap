@@ -334,16 +334,17 @@ impl Tray {
         if key == self.key && self.added {
             return;
         }
-        let old = (key.dot, key.outline, key.zz, key.size)
+        let redraw = (key.dot, key.outline, key.zz, key.size)
             != (self.key.dot, self.key.outline, self.key.zz, self.key.size);
-        if old {
-            match key.icon() {
-                Ok(icon) => {
-                    destroy_icon(std::mem::replace(&mut self.icon, icon));
-                }
-                Err(e) => log::warn!("tray: cannot draw icon ({e}); keeping the old one"),
-            }
-        }
+        // The shell keeps its own copy, so the old icon goes once replaced.
+        let retired = if redraw {
+            key.icon()
+                .inspect_err(|e| log::warn!("tray: cannot draw icon ({e}); keeping the old one"))
+                .ok()
+                .map(|icon| std::mem::replace(&mut self.icon, icon))
+        } else {
+            None
+        };
         self.key = key;
         if self.added {
             if !self.notify(NIM_MODIFY) {
@@ -352,6 +353,7 @@ impl Tray {
         } else {
             self.readd();
         }
+        retired.into_iter().for_each(destroy_icon);
     }
 
     /// (Re-)adds the icon — after `TaskbarCreated` (Explorer restarted).

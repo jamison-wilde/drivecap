@@ -38,13 +38,13 @@ drivecap/
 │       │   ├── controller.rs           # (planned) Pure app controller: events in, Effects out
 │       │   ├── raster.rs               # (planned) Pure raster helpers (premultiplied alpha, halo)
 │       │   ├── paint.rs                # (planned) GDI painter → UpdateLayeredWindow
-│       │   ├── card_wnd/               # Card window: mod (wndproc, pump, state), effects (apply_effects), input (mouse/drag), placement (monitors, position.json), render (GDI resources, paint, show/hide), shell (tray wiring)
+│       │   ├── card_wnd/               # Card window: mod (wndproc, pump, state), effects (apply_effects), input (mouse/drag), placement (monitors, position.json), render (GDI resources, paint, show/hide), popups (popup open/place/input/dismissal), shell (tray, right-click menus, font dialog)
 │       │   ├── single_instance.rs      # Named-mutex guard + Drivecap.Show relaunch signal
 │       │   ├── tray.rs                 # Shell_NotifyIconW tray icon: runtime-drawn severity glyph, tooltip, v4 callbacks
-│       │   ├── menu.rs                 # (planned) Pure menu model
-│       │   ├── contextmenu.rs          # (planned) TrackPopupMenu wrapper
-│       │   ├── popup_wnd.rs            # (planned) Opacity / settings popups
-│       │   └── font.rs                 # (planned) ChooseFontW picker
+│       │   ├── menu.rs                 # Pure menu model: card/tray menus, id → Command
+│       │   ├── contextmenu.rs          # TrackPopupMenu wrapper (submenus, checks)
+│       │   ├── popup_wnd.rs            # Opacity / settings popups: geometry, slider, dismissal, window class (+ popup_wnd/render.rs)
+│       │   └── font.rs                 # ChooseFontW picker
 │       └── wix/
 │           └── main.wxs                # WiX v4-schema installer definition (built with WiX v7)
 ├── scripts/

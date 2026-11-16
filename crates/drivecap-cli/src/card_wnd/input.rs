@@ -11,7 +11,7 @@ use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 use super::effects::{apply_effects, feed, send};
-use super::{AppState, DragStart, WinOp, placement, repaint};
+use super::{AppState, DragStart, WinOp, placement, popups, repaint, shell};
 use crate::controller::{Command, Effect, Input};
 use crate::layout::{CardLayout, HeaderButton, Hit, hit_test};
 use crate::theme;
@@ -103,7 +103,9 @@ pub(super) fn on_button_up(hwnd: HWND, st: &mut AppState, x: i32, y: i32) {
     if st.drag.take().is_some() {
         fx.extend(finish_drag(hwnd, st));
     } else if let Some(cmd) = click_command(down, hit_at(st, x, y)) {
-        fx = feed(st, Input::Cmd(cmd));
+        for c in popups::header_commands(st, cmd) {
+            fx.extend(feed(st, Input::Cmd(c)));
+        }
     }
     fx.extend(feed(st, Input::DragEnd));
     apply_effects(hwnd, st, fx);
@@ -145,11 +147,16 @@ fn finish_drag(hwnd: HWND, st: &mut AppState) -> Vec<Effect> {
     }
 }
 
-/// `WM_RBUTTONUP` at screen `pt` over `hit`. Empty until Task 14, which
-/// builds `menu::card_menu` and shows it — `TrackPopupMenu` runs a modal
-/// loop, so it must go through a deferred `WinOp`, never be called here
-/// while `st` is borrowed.
-pub(super) fn on_context_menu(_hwnd: HWND, _st: &mut AppState, _pt: POINT, _hit: Hit) {}
+/// `WM_RBUTTONUP` at screen `pt` over `hit`: queues the card menu (row
+/// items when over a row). `TrackPopupMenu` runs a modal loop, so it is a
+/// deferred op, never called here while `st` is borrowed.
+pub(super) fn on_context_menu(st: &mut AppState, pt: POINT, hit: Hit) {
+    let row = match hit {
+        Hit::Row(i) | Hit::RowSnooze(i) => Some(i),
+        _ => None,
+    };
+    shell::queue_menu(st, pt, row);
+}
 
 #[cfg(test)]
 mod tests {

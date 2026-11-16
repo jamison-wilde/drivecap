@@ -14,8 +14,8 @@
 //!   anchoring, `position.json`.
 //! - `render` — GDI resources, per-paint layout, draw + present, and
 //!   `ShowWindow` following the alpha.
-//! - `shell` — the tray icon: creation, refresh, `TaskbarCreated`,
-//!   callbacks.
+//! - `popups` — opacity / settings popups: open, place, input, dismissal.
+//! - `shell` — the tray icon, right-click menus and the font dialog.
 //!
 //! ## State ownership and re-entrancy
 //!
@@ -26,10 +26,12 @@
 //! re-enter the wndproc *with a message we handle* — `ShowWindow`,
 //! `SetWindowPos`, `SetCapture`/`ReleaseCapture` (`WM_CAPTURECHANGED`),
 //! `DestroyWindow` (`WM_NCDESTROY` frees the state), `ShellExecuteW`
-//! (may pump messages) and, from Task 14, `TrackPopupMenu` and
-//! `ChooseFontW` — are never made while the state is borrowed: handlers
-//! push a `WinOp` onto `AppState::deferred`, and `with_state` runs those
-//! after the borrow ends. Calls left inline (`UpdateLayeredWindow`,
+//! (may pump messages), `TrackPopupMenu` and `ChooseFontW` (modal loops),
+//! and popup window create/show/capture/destroy — are never made while
+//! the state is borrowed: handlers push a `WinOp` onto
+//! `AppState::deferred`, and `with_state` runs those after the borrow
+//! ends. Popup windows reach the same state through the card's `HWND`
+//! (`popup_mouse` → `with_state`). Calls left inline (`UpdateLayeredWindow`,
 //! `SetWindowLongPtrW(GWL_EXSTYLE)`, `SetTimer`) only re-enter with
 //! messages that go straight to `DefWindowProcW`; should one ever arrive
 //! for a handled message, `try_borrow_mut` fails and the message is
@@ -40,6 +42,7 @@
 mod effects;
 mod input;
 mod placement;
+mod popups;
 mod render;
 mod shell;
 
@@ -70,6 +73,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows_core::{PCWSTR, w};
 
 pub use effects::apply_effects;
+pub(crate) use popups::popup_mouse;
 use render::{compute_layout, refresh_resources, repaint, sync_shown};
 
 use crate::clock::{Clock, SystemClock};
@@ -113,6 +117,8 @@ enum WinOp {
     Capture,
     Release,
     OpenConfig(PathBuf),
+    Shell(shell::ShellOp),
+    Popup(popups::PopupOp),
     Destroy,
 }
 
@@ -161,6 +167,8 @@ pub struct AppState {
     drag: Option<DragStart>,
     /// Notification-area icon; `None` until created (or if it failed).
     tray: Option<Tray>,
+    /// The open popup window, once created.
+    popup: Option<popups::PopupWin>,
     deferred: Vec<WinOp>,
 }
 
@@ -220,6 +228,7 @@ impl AppState {
             press: None,
             drag: None,
             tray: None,
+            popup: None,
             deferred: Vec::new(),
         })
     }
@@ -379,6 +388,8 @@ fn run_op(hwnd: HWND, op: WinOp) {
         },
         WinOp::Release => unsafe { warn_on_err!(ReleaseCapture()) },
         WinOp::OpenConfig(path) => effects::open_config(hwnd, &path),
+        WinOp::Shell(op) => shell::run(hwnd, op),
+        WinOp::Popup(op) => popups::run(hwnd, op),
         WinOp::Destroy => unsafe { warn_on_err!(DestroyWindow(hwnd)) },
     }
 }
@@ -506,7 +517,7 @@ fn on_mouse(hwnd: HWND, msg: u32, (x, y): (i32, i32)) {
             let mut pt = POINT { x, y };
             // SAFETY: our own window; `pt` is a valid in/out pointer.
             let _ = unsafe { ClientToScreen(hwnd, &mut pt) };
-            input::on_context_menu(hwnd, st, pt, hit);
+            input::on_context_menu(st, pt, hit);
         }
     });
 }
@@ -563,10 +574,11 @@ fn free_state(hwnd: HWND) {
     }
 }
 
-/// Animation timer: polls the cursor, advances the controller, and
-/// repaints when anything visible moved (alpha, hover, the halo).
+/// Animation timer: polls the cursor (the open popup counts as the card),
+/// advances the controller, polls popup dismissal, and repaints when
+/// anything visible moved (alpha, hover, the halo).
 fn on_anim(hwnd: HWND, st: &mut AppState) {
-    let inside = input::poll_cursor(st);
+    let inside = input::poll_cursor(st) | popups::cursor_inside(st);
     let mut fx = effects::feed(st, Input::Cursor { inside });
     fx.extend(effects::feed(st, Input::Tick));
     let interactive = !st.ctl.visibility().click_through();
@@ -577,6 +589,7 @@ fn on_anim(hwnd: HWND, st: &mut AppState) {
     if hover != st.hover || st.halo_epoch.is_some() {
         fx.push(Effect::Redraw);
     }
+    fx.extend(popups::poll(st));
     apply_effects(hwnd, st, fx);
 }
 

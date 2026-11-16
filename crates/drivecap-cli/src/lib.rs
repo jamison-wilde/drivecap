@@ -36,6 +36,7 @@
 //! - [`position`] — per-monitor position store, work-area clamping, resize anchoring.
 //! - [`polling`] — watched-volume collection: scan reconcile, poll scheduling, snooze.
 //! - [`controller`] — the app controller: inputs → effects (ADR-0001).
+//! - [`menu`] — right-click menu model and item id → command mapping.
 //!
 //! **Win32 adapters:**
 //! - [`volumes`] — volume enumeration (GUID, label, USB bus), pure
@@ -48,9 +49,10 @@
 //!   relaunch signal.
 //! - [`tray`] — notification-area icon: runtime-drawn severity glyph,
 //!   tooltip, version-4 callbacks.
-//!
-//! The remaining pure core (menu) and Win32 adapters (popups, menus,
-//! font picker) land in later tasks; `CLAUDE.md` lists the planned set.
+//! - [`contextmenu`] — `TrackPopupMenu` wrapper (submenus, checks).
+//! - [`popup_wnd`] — opacity / settings popups: geometry, slider,
+//!   dismissal rules, the popup window class and its renderer.
+//! - [`font`] — `ChooseFontW` font picker.
 //!
 //! ## Where to read next
 //!
@@ -62,16 +64,20 @@ pub mod alerts;
 pub mod card_wnd;
 pub mod clock;
 pub mod config;
+pub mod contextmenu;
 pub mod controller;
 pub mod error;
+pub mod font;
 pub mod layout;
 pub mod log;
+pub mod menu;
 pub mod model;
 pub mod net_probe;
 pub mod paint;
 pub mod palette;
 pub mod paths;
 pub mod polling;
+pub mod popup_wnd;
 pub mod position;
 pub mod raster;
 pub mod single_instance;

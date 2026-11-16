@@ -86,7 +86,7 @@ pub(super) fn select_paint(
 }
 
 /// Single-line text in `r`, vertically centred.
-pub(super) fn text(hdc: HDC, s: &str, r: Rect, font: HFONT, color: Rgb, align: DRAW_TEXT_FORMAT) {
+pub(crate) fn text(hdc: HDC, s: &str, r: Rect, font: HFONT, color: Rgb, align: DRAW_TEXT_FORMAT) {
     if s.is_empty() || r.w <= 0 {
         return;
     }

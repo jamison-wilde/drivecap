@@ -30,7 +30,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
 
 pub use fonts::{Fonts, GdiMeasure};
-use gdi::text;
+pub(crate) use gdi::text;
 use glyphs::{glyph_chevron, glyph_gear, glyph_opacity};
 
 use crate::config::Mode;
@@ -356,6 +356,25 @@ impl Painter {
             let _ = GdiFlush();
             std::slice::from_raw_parts_mut(self.bits, (self.w * self.h) as usize)
         }
+    }
+
+    /// Generic canvas for other renderers (the popups): sizes the DIB to
+    /// `w × h` and clears it. Fill through [`Painter::pixels`], draw GDI
+    /// text on [`Painter::hdc`], then [`Painter::present`].
+    pub fn begin(&mut self, w: i32, h: i32) -> DrivecapResult<()> {
+        self.ensure_size(w, h)?;
+        self.buf().fill(0);
+        Ok(())
+    }
+
+    /// The memory DC holding the DIB.
+    pub fn hdc(&self) -> HDC {
+        self.hdc
+    }
+
+    /// The DIB pixels (GDI flushed first), `w × h` top-down.
+    pub fn pixels(&mut self) -> &mut [u32] {
+        self.buf()
     }
 
     /// Renders the card into the DIB. `halo_phase_ms` is `Some` while the

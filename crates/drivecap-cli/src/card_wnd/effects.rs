@@ -13,9 +13,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows_core::{HSTRING, PCWSTR, w};
 
+use super::shell::ShellOp;
 use super::{
     AppState, TICK_MS, TIMER_ANIM, TIMER_TICK, WinOp, anim_interval, exstyle_for, placement,
-    repaint, shell, sync_shown,
+    popups, repaint, shell, sync_shown,
 };
 use crate::config::Config;
 use crate::controller::{AnimRate, Effect, Input};
@@ -55,8 +56,11 @@ pub fn apply_effects(hwnd: HWND, st: &mut AppState, effects: Vec<Effect>) {
             Effect::UpdateTray => shell::update_tray(st),
             Effect::SaveConfig => save_config(st),
             Effect::OpenConfig => st.deferred.push(WinOp::OpenConfig(paths::config_path())),
-            Effect::ShowFontDialog => log::debug!("font dialog: not built yet (Task 14)"),
-            Effect::ShowPopup(p) => log::debug!("popup {p:?}: not built yet (Task 14)"),
+            Effect::ShowFontDialog => {
+                let current = st.ctl.config().font.clone();
+                st.deferred.push(WinOp::Shell(ShellOp::FontDialog(current)));
+            }
+            Effect::ShowPopup(p) => popups::show(st, p),
             Effect::Quit => quit(st),
         }
     }
@@ -65,6 +69,7 @@ pub fn apply_effects(hwnd: HWND, st: &mut AppState, effects: Vec<Effect>) {
     }
     if relayout || redraw {
         repaint(hwnd, st);
+        popups::refresh(st);
     }
     sync_shown(st);
 }
