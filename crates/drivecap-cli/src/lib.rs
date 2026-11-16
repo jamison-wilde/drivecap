@@ -33,6 +33,8 @@
 //! - [`visibility`] — fade/hold/linger, hover rest, pinning and click-through.
 //! - [`layout`] — card geometry, DPI metrics, hit testing, popup anchors.
 //! - [`position`] — per-monitor position store, work-area clamping, resize anchoring.
+//! - [`polling`] — watched-volume collection: scan reconcile, poll scheduling, snooze.
+//! - [`controller`] — the app controller: inputs → effects (ADR-0001).
 //!
 //! **Win32 adapters:**
 //! - [`volumes`] — volume enumeration (GUID, label, USB bus), pure
@@ -52,6 +54,7 @@
 pub mod alerts;
 pub mod clock;
 pub mod config;
+pub mod controller;
 pub mod error;
 pub mod layout;
 pub mod log;
@@ -59,6 +62,7 @@ pub mod model;
 pub mod net_probe;
 pub mod palette;
 pub mod paths;
+pub mod polling;
 pub mod position;
 pub mod theme;
 pub mod visibility;
