@@ -20,6 +20,9 @@ pub const GIB: u64 = 1 << 30;
 pub const MAX_GB: f64 = 1e6;
 /// Smallest accepted step in GiB.
 pub const MIN_STEP_GB: f64 = 0.01;
+/// Most steps a rule may span between dire and threshold; more is not
+/// meaningful for a bar that draws a gap per level.
+pub const MAX_LEVELS: u64 = 1_000;
 /// Ceiling for every seconds-valued setting (one day).
 pub const MAX_SECS: u64 = 86_400;
 /// Ceiling for every millisecond animation timing (one hour).
@@ -203,7 +206,7 @@ impl RuleGb {
         // Re-check after the byte conversion truncates.
         finite && in_range && {
             let r = self.to_bytes();
-            r.step > 0 && r.dire < r.threshold
+            r.step > 0 && r.dire < r.threshold && (r.threshold - r.dire) / r.step <= MAX_LEVELS
         }
     }
 
@@ -750,5 +753,21 @@ mod tests {
         std::fs::write(path.join("keep"), "x").unwrap();
         assert!(Config::default().save(&path).is_err());
         assert!(!dir.path().join("config.json.tmp").exists());
+    }
+
+    #[test]
+    fn level_count_capped_at_max_levels() {
+        let c = Config::from_json_str(
+            r#"{"volumes":[
+                {"id":"OK","thresholdGb":1000,"stepGb":1,"direGb":0},
+                {"id":"BAD","thresholdGb":1001,"stepGb":1,"direGb":0}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(c.rule_for(&id("OK")).threshold, 1000 * GIB);
+        assert_eq!(
+            c.rule_for(&id("BAD")),
+            Config::default().rule_for(&id("none"))
+        );
     }
 }

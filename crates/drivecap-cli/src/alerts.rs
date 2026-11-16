@@ -100,6 +100,32 @@ pub fn levels(rule: &Rule) -> Vec<u64> {
     out
 }
 
+/// The level a free value sits at: the lowest level `>= free`, or `None`
+/// outside (dire, threshold]. Equals the matching entry of [`levels`],
+/// computed without materialising the list (hot path of every sample).
+fn level_at(free: u64, rule: &Rule) -> Option<u64> {
+    if free > rule.threshold || free <= rule.dire {
+        return None;
+    }
+    if rule.step == 0 {
+        return Some(rule.threshold);
+    }
+    let k = (rule.threshold - free) / rule.step;
+    Some(rule.threshold - k * rule.step)
+}
+
+/// The last entry of [`levels`], computed arithmetically.
+fn lowest_level(rule: &Rule) -> Option<u64> {
+    if rule.threshold <= rule.dire {
+        return None;
+    }
+    if rule.step == 0 {
+        return Some(rule.threshold);
+    }
+    let k = (rule.threshold - rule.dire - 1) / rule.step;
+    Some(rule.threshold - k * rule.step)
+}
+
 /// Zone for `free` bytes (never [`Zone::Unreachable`]).
 pub fn zone_for(free: u64, rule: &Rule) -> Zone {
     if free > rule.threshold {
@@ -308,7 +334,7 @@ impl VolumeAlert {
     fn enter_dire(&mut self, rule: &Rule) -> Option<AlertEvent> {
         // Every level is passed on the way into dire; recovering to just
         // above dire must not re-fire the lowest one.
-        if let Some(lowest) = levels(rule).last().copied() {
+        if let Some(lowest) = lowest_level(rule) {
             self.last_warned = Some(self.last_warned.map_or(lowest, |l| l.min(lowest)));
         }
         if self.dire_warned {
@@ -319,7 +345,7 @@ impl VolumeAlert {
     }
 
     fn cross_level(&mut self, free: u64, rule: &Rule) -> Option<AlertEvent> {
-        let current = levels(rule).into_iter().rfind(|&l| free <= l)?;
+        let current = level_at(free, rule)?;
         if self.last_warned.is_some_and(|l| current >= l) {
             return None;
         }
@@ -685,5 +711,42 @@ mod tests {
         let next = 30_000 + reminder_interval_ms(gb(9.0), &rule(), &t());
         assert_eq!(a.tick(&rule(), 35_000, &t()), None);
         assert_eq!(a.tick(&rule(), next, &t()), Some(AlertEvent::Reminder));
+    }
+
+    #[test]
+    fn arithmetic_levels_match_levels_vec() {
+        let rules = [
+            rule(),
+            Rule {
+                dire: 5 * GIB,
+                ..rule()
+            },
+            Rule {
+                threshold: 21 * GIB,
+                ..rule()
+            },
+            Rule {
+                threshold: 7,
+                step: 3,
+                dire: 0,
+            },
+            Rule {
+                threshold: 10,
+                step: 20,
+                dire: 1,
+            },
+        ];
+        for r in rules {
+            let lv = levels(&r);
+            assert_eq!(lowest_level(&r), lv.last().copied(), "{r:?}");
+            for free in (r.dire + 1)..=r.threshold.min(r.dire + 40) {
+                let want = lv.iter().copied().rfind(|&l| free <= l);
+                assert_eq!(level_at(free, &r), want, "{r:?} free {free}");
+            }
+            for free in [r.threshold, r.threshold - 1, r.dire + 1] {
+                let want = lv.iter().copied().rfind(|&l| free <= l);
+                assert_eq!(level_at(free, &r), want, "{r:?} free {free}");
+            }
+        }
     }
 }
