@@ -18,6 +18,9 @@ use windows::Win32::Storage::FileSystem::{
     GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
     GetVolumeNameForVolumeMountPointW, GetVolumePathNameW, OPEN_EXISTING,
 };
+use windows::Win32::System::Diagnostics::Debug::{
+    SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetErrorMode,
+};
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{
     IOCTL_STORAGE_QUERY_PROPERTY, PropertyStandardQuery, STORAGE_DEVICE_DESCRIPTOR,
@@ -34,8 +37,9 @@ pub const DRIVE_FIXED: u32 = 3;
 /// `GetDriveTypeW` result for network drives.
 pub const DRIVE_REMOTE: u32 = 4;
 
-/// Label used when a volume has no name of its own (Explorer's wording).
-const DEFAULT_LABEL: &str = "Local Disk";
+/// Labels for volumes without a name of their own (Explorer's wording).
+const LOCAL_LABEL: &str = "Local Disk";
+const USB_LABEL: &str = "USB Drive";
 
 /// How a volume's free space is queried.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,8 +89,11 @@ pub trait VolumeSource {
     /// Every connected lettered volume (fixed and removable).
     fn connected(&self) -> Vec<RawVolume>;
     /// Resolves a configured extra path to the volume that holds it; a
-    /// network path resolves to a [`DRIVE_REMOTE`] volume keyed by
-    /// [`normalize_network`]. `None` when the path cannot be resolved.
+    /// network path (UNC or mapped drive letter) resolves to a
+    /// [`DRIVE_REMOTE`] volume keyed by [`normalize_network`] without
+    /// touching the share. The extra's `label` is the configured path.
+    /// `None` when the path cannot be resolved. Local paths may touch
+    /// slow local media (e.g. spin up a parked disk).
     fn resolve_path(&self, path: &str) -> Option<RawVolume>;
 }
 
@@ -123,7 +130,8 @@ pub fn select(raw: &[RawVolume], extras: &[RawVolume], cfg: &Config) -> Vec<Volu
             continue;
         }
         if !seen.insert(&r.id) {
-            log::info!("volumes: extra {} collapsed into {}", r.label, r.id.0);
+            // Debug, not info: select runs on every rescan.
+            log::debug!("volumes: extra path {} collapsed into {}", r.label, r.id.0);
             continue;
         }
         out.push(VolumeInfo {
@@ -158,7 +166,52 @@ fn watched(r: &RawVolume, cfg: &Config) -> bool {
     })
 }
 
+/// The `\\server\share…` form of a network path (`\\…` or `\\?\UNC\…`);
+/// `\\?\` and `\\.\` device paths are local. Mapped drive letters are
+/// detected at runtime, not here.
+pub fn network_path(path: &str) -> Option<String> {
+    const UNC: &[u8] = br"\\?\UNC\";
+    let b = path.as_bytes();
+    if b.len() >= UNC.len() && b[..UNC.len()].eq_ignore_ascii_case(UNC) {
+        // The prefix is ASCII, so slicing at its length is a char boundary.
+        return Some(format!(r"\\{}", &path[UNC.len()..]));
+    }
+    if path.starts_with(r"\\?\") || path.starts_with(r"\\.\") {
+        return None;
+    }
+    path.starts_with(r"\\").then(|| path.to_string())
+}
+
+/// `Some('Z')` when `path` starts with a drive letter and colon.
+fn drive_letter_prefix(path: &str) -> Option<char> {
+    let b = path.as_bytes();
+    (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':')
+        .then(|| char::from(b[0].to_ascii_uppercase()))
+}
+
+/// A display label: the volume name, else a device-class default.
+pub fn display_label(name: &str, drive_type: u32, bus: Bus) -> String {
+    if !name.is_empty() {
+        name.to_string()
+    } else if drive_type == DRIVE_REMOVABLE || bus == Bus::Usb {
+        USB_LABEL.to_string()
+    } else {
+        LOCAL_LABEL.to_string()
+    }
+}
+
 // ── Win32 adapter ─────────────────────────────────────────────────────────────
+
+/// Makes media errors (empty card-reader slot, ejected disc) fail the
+/// call instead of raising the system "no disk in drive" modal. Call once
+/// at process start, before any volume query. Keeps existing mode bits.
+pub fn suppress_critical_error_dialogs() {
+    let quiet = SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX;
+    // SAFETY: no pointers; only changes this process's error mode.
+    let prev = unsafe { SetErrorMode(quiet) };
+    // SAFETY: as above; restores the previous bits alongside ours.
+    unsafe { SetErrorMode(prev | quiet) };
+}
 
 /// Production [`VolumeSource`].
 pub struct Win32Volumes;
@@ -174,50 +227,70 @@ impl VolumeSource for Win32Volumes {
     }
 
     fn resolve_path(&self, path: &str) -> Option<RawVolume> {
-        if path.starts_with(r"\\") {
+        if let Some(unc) = network_path(path) {
+            return Some(network_raw(&unc));
+        }
+        // Mapped drives first: GetVolumePathNameW on a disconnected mapped
+        // drive stalls on the network; GetDriveTypeW does not.
+        if let Some(letter) = drive_letter_prefix(path)
+            && drive_type(&format!("{letter}:\\")) == DRIVE_REMOTE
+        {
             return Some(network_raw(path));
         }
         let Some(mount) = volume_path_name(path) else {
             log::warn!("volumes: cannot resolve extra path {path}");
             return None;
         };
-        if drive_type(&mount) == DRIVE_REMOTE {
+        let dtype = drive_type(&mount);
+        if dtype == DRIVE_REMOTE {
             return Some(network_raw(path));
         }
-        if let Some(letter) = drive_root_letter(&mount) {
-            return lettered_volume(letter);
-        }
-        let guid = volume_guid(&mount)?;
-        let bus = bus_type(guid.trim_end_matches('\\'));
-        Some(RawVolume {
-            id: VolumeId(guid),
-            root: mount.clone(),
-            letter: String::new(),
-            label: path.to_string(),
-            drive_type: drive_type(&mount),
-            bus,
-        })
+        let mut vol = match drive_root_letter(&mount) {
+            Some(letter) => lettered_volume(letter)?,
+            None => {
+                let guid = volume_guid(&mount)?;
+                let bus = bus_type(guid.trim_end_matches('\\'));
+                RawVolume {
+                    id: VolumeId(guid),
+                    root: mount,
+                    letter: String::new(),
+                    label: String::new(),
+                    drive_type: dtype,
+                    bus,
+                }
+            }
+        };
+        vol.label = path.to_string();
+        Some(vol)
     }
 }
 
 /// The fixed or removable volume at `letter:`, or `None` for other drive
-/// types and volumes without a GUID (e.g. an empty card reader).
+/// types, removable slots with no media (an empty card reader still has a
+/// GUID, but its volume-info query fails) and volumes without a GUID. Call
+/// [`suppress_critical_error_dialogs`] first so empty slots fail quietly.
 fn lettered_volume(letter: char) -> Option<RawVolume> {
     let root = format!("{letter}:\\");
     let dtype = drive_type(&root);
     if dtype != DRIVE_FIXED && dtype != DRIVE_REMOVABLE {
         return None;
     }
+    let name = volume_name(&root);
+    if name.is_none() && dtype == DRIVE_REMOVABLE {
+        log::debug!("volumes: {root} has no media; skipped");
+        return None;
+    }
     let Some(guid) = volume_guid(&root) else {
         log::debug!("volumes: {root} has no volume GUID; skipped");
         return None;
     };
+    let bus = bus_type(&format!(r"\\.\{letter}:"));
     Some(RawVolume {
         id: VolumeId(guid),
         letter: format!("{letter}:"),
-        label: volume_label(&root),
+        label: display_label(name.as_deref().unwrap_or(""), dtype, bus),
         drive_type: dtype,
-        bus: bus_type(&format!(r"\\.\{letter}:")),
+        bus,
         root,
     })
 }
@@ -267,19 +340,21 @@ fn volume_guid(mount: &str) -> Option<String> {
     }
 }
 
-fn volume_label(root: &str) -> String {
+/// The volume name (possibly empty), or `None` when the query fails —
+/// for removable drives, the no-media signal.
+fn volume_name(root: &str) -> Option<String> {
     let w = wide(root);
     let mut name = [0u16; 261];
     // SAFETY: `w` is NUL-terminated; `name` is a valid writable slice.
-    let ok = unsafe {
+    let res = unsafe {
         GetVolumeInformationW(PCWSTR(w.as_ptr()), Some(&mut name), None, None, None, None)
-    }
-    .is_ok();
-    let label = from_wide(&name);
-    if ok && !label.is_empty() {
-        label
-    } else {
-        DEFAULT_LABEL.to_string()
+    };
+    match res {
+        Ok(()) => Some(from_wide(&name)),
+        Err(e) => {
+            log::debug!("volumes: no volume info for {root}: {e}");
+            None
+        }
     }
 }
 
@@ -392,7 +467,7 @@ mod tests {
             id: VolumeId(format!(r"\\?\Volume{{{guid}}}\")),
             root: format!("{letter}\\"),
             letter: letter.to_string(),
-            label: DEFAULT_LABEL.to_string(),
+            label: LOCAL_LABEL.to_string(),
             drive_type,
             bus,
         }
@@ -516,6 +591,45 @@ mod tests {
         assert_eq!(normalize_network(r"\\NAS\Builds\"), r"\\nas\builds");
         assert_eq!(normalize_network(r"\\nas\builds"), r"\\nas\builds");
         assert_eq!(normalize_network(r"Z:\Share\\"), r"z:\share");
+    }
+
+    #[test]
+    fn network_path_recognises_unc_forms_only() {
+        assert_eq!(
+            network_path(r"\\nas\builds").as_deref(),
+            Some(r"\\nas\builds")
+        );
+        assert_eq!(
+            network_path(r"\\?\UNC\nas\builds").as_deref(),
+            Some(r"\\nas\builds")
+        );
+        assert_eq!(network_path(r"\\?\unc\NAS\b").as_deref(), Some(r"\\NAS\b"));
+        assert_eq!(network_path(r"\\?\Volume{x}\data"), None);
+        assert_eq!(network_path(r"\\?\C:\dev"), None);
+        assert_eq!(network_path(r"\\.\C:"), None);
+        assert_eq!(network_path(r"C:\dev"), None);
+        assert_eq!(network_path(r"Z:\share"), None);
+    }
+
+    #[test]
+    fn drive_letter_prefix_reads_leading_letter() {
+        assert_eq!(drive_letter_prefix(r"z:\share\x"), Some('Z'));
+        assert_eq!(drive_letter_prefix("Z:"), Some('Z'));
+        assert_eq!(drive_letter_prefix(r"\\?\C:\dev"), None);
+        assert_eq!(drive_letter_prefix(r"dev\x"), None);
+    }
+
+    #[test]
+    fn display_label_prefers_volume_name() {
+        assert_eq!(display_label("Windows", DRIVE_FIXED, Bus::Other), "Windows");
+        assert_eq!(display_label("Stick", DRIVE_REMOVABLE, Bus::Usb), "Stick");
+    }
+
+    #[test]
+    fn display_label_defaults_by_device_class() {
+        assert_eq!(display_label("", DRIVE_FIXED, Bus::Other), "Local Disk");
+        assert_eq!(display_label("", DRIVE_FIXED, Bus::Usb), "USB Drive");
+        assert_eq!(display_label("", DRIVE_REMOVABLE, Bus::Other), "USB Drive");
     }
 
     #[test]

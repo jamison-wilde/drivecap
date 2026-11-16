@@ -71,6 +71,7 @@ fn main() {
 fn run(level: LogLevel) {
     // Intentionally ignored: fails only when there is no console to free.
     let _ = unsafe { FreeConsole() };
+    volumes::suppress_critical_error_dialogs();
     drivecap_log::init(level);
     log::info!("drivecap {} starting", env!("CARGO_PKG_VERSION"));
     // Message pump arrives with the card window (Task 12).
@@ -85,6 +86,7 @@ fn status() {
     // already attached or launched without a console.
     // SAFETY: no pointers; only changes this process's console attachment.
     let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+    volumes::suppress_critical_error_dialogs();
     let cfg = Config::load(&paths::config_path()).config;
     let source = Win32Volumes;
     let connected = source.connected();
