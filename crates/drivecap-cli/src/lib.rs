@@ -28,8 +28,10 @@
 //! **Pure cores:**
 //! - [`config`] — `config.json` schema, defaults, clamping, safe load/save.
 //! - [`alerts`] — zones, warning levels, debounce, snooze, reminder schedule.
+//! - [`palette`] — light/dark design tokens with config overrides.
+//! - [`model`] — surface view model: sorted rows, title, state dot, halo.
 //!
-//! The remaining pure cores (model, visibility, layout, controller,
+//! The remaining pure cores (visibility, layout, controller,
 //! menu) and Win32 adapters (volumes, net probe, paint, card window,
 //! tray, popups) land in later tasks; `CLAUDE.md` lists the planned set.
 //!
@@ -44,5 +46,7 @@ pub mod clock;
 pub mod config;
 pub mod error;
 pub mod log;
+pub mod model;
+pub mod palette;
 pub mod paths;
 pub mod theme;
