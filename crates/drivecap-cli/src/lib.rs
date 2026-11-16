@@ -31,6 +31,7 @@
 //! - [`palette`] — light/dark design tokens with config overrides.
 //! - [`model`] — surface view model: sorted rows, title, state dot, halo.
 //! - [`visibility`] — fade/hold/linger, hover rest, pinning and click-through.
+//! - [`raster`] — per-pixel card mask, premultiply, halo and border pulse.
 //! - [`layout`] — card geometry, DPI metrics, hit testing, popup anchors.
 //! - [`position`] — per-monitor position store, work-area clamping, resize anchoring.
 //! - [`polling`] — watched-volume collection: scan reconcile, poll scheduling, snooze.
@@ -40,9 +41,10 @@
 //! - [`volumes`] — volume enumeration (GUID, label, USB bus), pure
 //!   selection rules, local free-space query.
 //! - [`net_probe`] — worker-thread network free-space probe (3 s budget).
+//! - [`paint`] — GDI card painter: fonts, 32-bpp DIB, `UpdateLayeredWindow`.
 //!
 //! The remaining pure core (menu) and Win32 adapters
-//! (paint, card window, tray, popups) land in later
+//! (card window, tray, popups) land in later
 //! tasks; `CLAUDE.md` lists the planned set.
 //!
 //! ## Where to read next
@@ -60,10 +62,12 @@ pub mod layout;
 pub mod log;
 pub mod model;
 pub mod net_probe;
+pub mod paint;
 pub mod palette;
 pub mod paths;
 pub mod polling;
 pub mod position;
+pub mod raster;
 pub mod theme;
 pub mod visibility;
 pub mod volumes;
