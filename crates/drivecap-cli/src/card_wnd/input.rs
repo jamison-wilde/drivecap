@@ -14,6 +14,7 @@ use super::effects::{apply_effects, feed, send};
 use super::{AppState, DragStart, WinOp, placement, repaint};
 use crate::controller::{Command, Effect, Input};
 use crate::layout::{CardLayout, HeaderButton, Hit, hit_test};
+use crate::theme;
 
 /// The command a press on `down` released on `up` performs: header
 /// buttons and row Zz act on a release over the same target (a standard
@@ -100,8 +101,7 @@ pub(super) fn on_button_up(hwnd: HWND, st: &mut AppState, x: i32, y: i32) {
     st.deferred.push(WinOp::Release);
     let mut fx = Vec::new();
     if st.drag.take().is_some() {
-        finish_drag(st);
-        fx.push(Effect::Redraw);
+        fx.extend(finish_drag(hwnd, st));
     } else if let Some(cmd) = click_command(down, hit_at(st, x, y)) {
         fx = feed(st, Input::Cmd(cmd));
     }
@@ -118,18 +118,19 @@ pub(super) fn on_capture_lost(hwnd: HWND, st: &mut AppState) {
     }
     let mut fx = Vec::new();
     if st.drag.take().is_some() {
-        finish_drag(st);
-        fx.push(Effect::Redraw);
+        fx.extend(finish_drag(hwnd, st));
     }
     fx.extend(feed(st, Input::DragEnd));
     apply_effects(hwnd, st, fx);
 }
 
 /// Clamps the dropped card into its monitor's work area, records it
-/// against that monitor and saves `position.json`.
-fn finish_drag(st: &mut AppState) {
+/// against that monitor and saves `position.json`. Returns the repaint —
+/// a `Relayout` when the drop landed on a monitor of another DPI (the
+/// `WM_DPICHANGED` rescale may have been dropped or re-clamped mid-drag).
+fn finish_drag(hwnd: HWND, st: &mut AppState) -> Vec<Effect> {
     let (Some((x, y)), Some(l)) = (st.card_pos, st.layout.as_ref()) else {
-        return;
+        return vec![Effect::Redraw];
     };
     let (w, h) = (l.card.w, l.card.h);
     let (x, y) = placement::clamp_card(x, y, w, h);
@@ -137,6 +138,11 @@ fn finish_drag(st: &mut AppState) {
     st.positions.record(x, y, w, h, &placement::work_areas());
     placement::save_positions(&st.positions);
     log::info!("card dragged to ({x}, {y})");
+    if theme::get_dpi(hwnd) != st.scale_key.dpi {
+        vec![Effect::Relayout]
+    } else {
+        vec![Effect::Redraw]
+    }
 }
 
 /// `WM_RBUTTONUP` at screen `pt` over `hit`. Empty until Task 14, which

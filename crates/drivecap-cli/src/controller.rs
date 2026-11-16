@@ -91,7 +91,9 @@ pub enum Input {
     ButtonDown,
     DragEnd,
     TrayClick,
-    /// A second instance was launched (behaves like a tray click).
+    /// A second instance was launched: always shows the card as a tray
+    /// click on a hidden card would (forced expanded, full opacity, 6 s
+    /// hold); never hides it.
     Relaunched,
     ConfigReloaded(Config),
     Cmd(Command),
@@ -225,7 +227,9 @@ impl Controller {
             Input::Cursor { inside } => self.vis.cursor(inside, now, &self.cfg.timings),
             Input::ButtonDown => self.vis.button_down(now),
             Input::DragEnd => self.vis.drag_end(now, &self.cfg.timings),
-            Input::TrayClick | Input::Relaunched => self.tray_click(now),
+            Input::TrayClick => self.tray_click(now),
+            // A second launch always means "show me": never hides.
+            Input::Relaunched => self.show(ShowReason::Tray, now),
             Input::ConfigReloaded(cfg) => {
                 self.cfg = cfg;
                 self.writable = true;
@@ -384,7 +388,16 @@ impl Controller {
         self.vols.reminders_shown(&self.cfg.timings, now);
     }
 
-    /// Tray left-click / relaunch: hide a showing card, else force-show it.
+    /// Snoozing everything dismisses the card at once: re-pin first (the
+    /// snooze released any dire pin, and `hide` is a no-op while pinned),
+    /// then start the fade-out.
+    fn hide_after_snooze(&mut self, now: u64) {
+        let pinned = self.vols.any_awake_dire(now);
+        self.vis.set_pinned(pinned, now, &self.cfg.timings);
+        self.vis.hide(now);
+    }
+
+    /// Tray left-click: hide a showing card, else force-show it.
     fn tray_click(&mut self, now: u64) {
         if self.vis.is_visible() && self.vis.phase() != Phase::FadingOut {
             self.vis.hide(now);
@@ -400,8 +413,17 @@ impl Controller {
                     self.vols.toggle_snooze(&id, self.cfg.snooze, now);
                 }
             }
-            Command::SnoozeAll => self.vols.toggle_snooze_all(self.cfg.snooze, now),
-            Command::SnoozeWith(SnoozeTarget::All, choice) => self.vols.snooze_all(choice, now),
+            Command::SnoozeAll => {
+                let was_all = self.view(now).snooze_all_active;
+                self.vols.toggle_snooze_all(self.cfg.snooze, now);
+                if !was_all && self.view(now).snooze_all_active {
+                    self.hide_after_snooze(now);
+                }
+            }
+            Command::SnoozeWith(SnoozeTarget::All, choice) => {
+                self.vols.snooze_all(choice, now);
+                self.hide_after_snooze(now);
+            }
             Command::SnoozeWith(SnoozeTarget::Volume(id), choice) => {
                 self.vols.snooze(&id, choice, now);
             }
@@ -728,6 +750,53 @@ mod tests {
     }
 
     #[test]
+    fn header_snooze_all_hides_a_visible_warning_card_at_once() {
+        let mut c = ctl();
+        sample(&mut c, 11.0, T0);
+        tick_through(&mut c, T0, T0 + 1_000);
+        assert_eq!(c.visibility().phase(), Phase::Holding);
+        cmd(&mut c, Command::SnoozeAll, T0 + 1_000);
+        assert_eq!(c.visibility().phase(), Phase::FadingOut);
+    }
+
+    #[test]
+    fn header_snooze_all_unpins_and_hides_a_dire_card() {
+        let mut c = ctl();
+        sample(&mut c, 1.0, T0);
+        tick_through(&mut c, T0, T0 + 1_000);
+        assert!(!c.visibility().click_through(), "dire card is pinned");
+        cmd(&mut c, Command::SnoozeAll, T0 + 1_000);
+        assert!(c.visibility().click_through(), "snoozed dire unpins");
+        assert_eq!(c.visibility().phase(), Phase::FadingOut);
+    }
+
+    #[test]
+    fn header_zz_waking_all_keeps_the_card_visible() {
+        let mut c = ctl();
+        sample(&mut c, 11.0, T0);
+        cmd(&mut c, Command::SnoozeAll, T0 + 100);
+        c.handle(Input::Relaunched, T0 + 2_000);
+        tick_through(&mut c, T0 + 2_000, T0 + 2_500);
+        assert_eq!(c.visibility().phase(), Phase::Holding);
+        cmd(&mut c, Command::SnoozeAll, T0 + 2_500);
+        assert!(!c.view(T0 + 2_500).snooze_all_active, "woken");
+        assert_eq!(c.visibility().phase(), Phase::Holding);
+    }
+
+    #[test]
+    fn snooze_with_all_hides_the_card() {
+        let mut c = ctl();
+        sample(&mut c, 11.0, T0);
+        tick_through(&mut c, T0, T0 + 1_000);
+        cmd(
+            &mut c,
+            Command::SnoozeWith(SnoozeTarget::All, SnoozeChoice::OneHour),
+            T0 + 1_000,
+        );
+        assert_eq!(c.visibility().phase(), Phase::FadingOut);
+    }
+
+    #[test]
     fn snooze_all_toggles() {
         let mut c = ctl();
         sample(&mut c, 11.0, T0);
@@ -860,10 +929,46 @@ mod tests {
         c.handle(Input::TrayClick, T0);
         tick_through(&mut c, T0, T0 + 300);
         assert_eq!(c.visibility().phase(), Phase::Holding);
-        c.handle(Input::Relaunched, T0 + 300);
+        c.handle(Input::TrayClick, T0 + 300);
         assert_eq!(c.visibility().phase(), Phase::FadingOut);
         tick_through(&mut c, T0 + 300, T0 + 1_000);
         assert!(!c.visibility().is_visible());
+    }
+
+    #[test]
+    fn relaunch_while_visible_stays_visible_and_re_holds() {
+        let mut c = ctl();
+        c.handle(Input::TrayClick, T0);
+        tick_through(&mut c, T0, T0 + 5_000);
+        assert_eq!(c.visibility().phase(), Phase::Holding);
+        c.handle(Input::Relaunched, T0 + 5_000);
+        // The first hold (200 ms fade + 6 s) would end at 6.2 s; the
+        // relaunch re-holds 6 s from 5 s.
+        tick_through(&mut c, T0 + 5_000, T0 + 10_000);
+        assert_eq!(c.visibility().phase(), Phase::Holding);
+        assert_eq!(c.alpha(T0 + 10_000), 255);
+    }
+
+    #[test]
+    fn relaunch_while_hidden_shows_forced_expanded() {
+        let mut c = ctl();
+        assert!(!c.visibility().is_visible());
+        c.handle(Input::Relaunched, T0);
+        assert!(c.visibility().is_visible());
+        assert!(c.visibility().tray_forced());
+        tick_through(&mut c, T0, T0 + 300);
+        assert_eq!(c.alpha(T0 + 300), 255);
+    }
+
+    #[test]
+    fn relaunch_while_fading_out_shows_again() {
+        let mut c = ctl();
+        c.handle(Input::TrayClick, T0);
+        tick_through(&mut c, T0, T0 + 300);
+        c.handle(Input::TrayClick, T0 + 300);
+        assert_eq!(c.visibility().phase(), Phase::FadingOut);
+        c.handle(Input::Relaunched, T0 + 400);
+        assert_eq!(c.visibility().phase(), Phase::FadingIn);
     }
 
     #[test]

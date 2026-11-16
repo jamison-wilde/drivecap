@@ -38,7 +38,7 @@ drivecap/
 │       │   ├── controller.rs           # (planned) Pure app controller: events in, Effects out
 │       │   ├── raster.rs               # (planned) Pure raster helpers (premultiplied alpha, halo)
 │       │   ├── paint.rs                # (planned) GDI painter → UpdateLayeredWindow
-│       │   ├── card_wnd/               # Card window: mod (wndproc, pump, repaint), effects (apply_effects), input (mouse/drag), placement (monitors, position.json)
+│       │   ├── card_wnd/               # Card window: mod (wndproc, pump, state), effects (apply_effects), input (mouse/drag), placement (monitors, position.json), render (GDI resources, paint, show/hide)
 │       │   ├── single_instance.rs      # Named-mutex guard + Drivecap.Show relaunch signal
 │       │   ├── tray.rs                 # (planned) Shell_NotifyIconW tray icon
 │       │   ├── menu.rs                 # (planned) Pure menu model

@@ -61,25 +61,89 @@ fn unguarded() -> Instance {
 }
 
 /// Tells the running instance to show its card: posts the registered
-/// `Drivecap.Show` message to the window of class
-/// [`CARD_CLASS`]. No-op (logged) when the primary has no window yet.
+/// `Drivecap.Show` message to the window of class [`CARD_CLASS`]. The
+/// primary may still be starting (both launched at login), so the window
+/// is looked for up to 10 times, 100 ms apart.
 pub fn signal_primary() {
-    // SAFETY: static wide strings; FindWindowW only reads them.
+    // SAFETY: static wide string.
     let msg = unsafe { RegisterWindowMessageW(w!("Drivecap.Show")) };
-    match unsafe { FindWindowW(CARD_CLASS, PCWSTR::null()) } {
-        Ok(hwnd) => {
+    let find = || {
+        // SAFETY: static class name; FindWindowW only reads it.
+        unsafe { FindWindowW(CARD_CLASS, PCWSTR::null()) }.ok()
+    };
+    match retry(FIND_ATTEMPTS, find, || std::thread::sleep(FIND_PAUSE)) {
+        Some(hwnd) => {
             // SAFETY: posting to another process's window; no pointers.
             if let Err(e) = unsafe { PostMessageW(Some(hwnd), msg, WPARAM(0), LPARAM(0)) } {
                 log::warn!("single_instance: PostMessageW(Drivecap.Show) failed: {e}");
             }
         }
-        Err(e) => log::info!("single_instance: no card window to signal ({e})"),
+        None => log::info!("single_instance: no card window to signal after {FIND_ATTEMPTS} tries"),
     }
+}
+
+/// How many times [`signal_primary`] looks for the card window.
+const FIND_ATTEMPTS: u32 = 10;
+/// Pause between looks (10 × 100 ms ≈ 1 s).
+const FIND_PAUSE: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Calls `find` up to `attempts` times, sleeping `pause` between misses.
+fn retry<T>(
+    attempts: u32,
+    mut find: impl FnMut() -> Option<T>,
+    mut pause: impl FnMut(),
+) -> Option<T> {
+    for i in 0..attempts {
+        if let Some(v) = find() {
+            return Some(v);
+        }
+        if i + 1 < attempts {
+            pause();
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_returns_the_first_hit_without_pausing() {
+        let mut pauses = 0;
+        assert_eq!(retry(10, || Some(7), || pauses += 1), Some(7));
+        assert_eq!(pauses, 0);
+    }
+
+    #[test]
+    fn retry_keeps_trying_until_the_window_appears() {
+        let (mut calls, mut pauses) = (0, 0);
+        let found = retry(
+            10,
+            || {
+                calls += 1;
+                (calls == 4).then_some("hwnd")
+            },
+            || pauses += 1,
+        );
+        assert_eq!(found, Some("hwnd"));
+        assert_eq!((calls, pauses), (4, 3));
+    }
+
+    #[test]
+    fn retry_gives_up_after_its_attempts() {
+        let (mut calls, mut pauses) = (0, 0);
+        let found: Option<()> = retry(
+            10,
+            || {
+                calls += 1;
+                None
+            },
+            || pauses += 1,
+        );
+        assert_eq!(found, None);
+        assert_eq!((calls, pauses), (10, 9));
+    }
 
     #[test]
     fn second_acquire_is_secondary() {

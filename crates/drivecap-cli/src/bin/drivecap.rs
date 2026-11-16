@@ -90,7 +90,10 @@ fn run(level: LogLevel) {
     };
     match card_wnd::run() {
         Ok(()) => log::info!("drivecap exiting"),
-        Err(e) => log::error!("drivecap stopped: {e}"),
+        Err(e) => {
+            log::error!("drivecap stopped: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
