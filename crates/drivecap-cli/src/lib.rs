@@ -42,10 +42,13 @@
 //!   selection rules, local free-space query.
 //! - [`net_probe`] — worker-thread network free-space probe (3 s budget).
 //! - [`paint`] — GDI card painter: fonts, 32-bpp DIB, `UpdateLayeredWindow`.
+//! - [`card_wnd`] — the layered card window, wndproc, timers, message
+//!   pump and [`card_wnd::apply_effects`].
+//! - [`single_instance`] — named-mutex guard and the `Drivecap.Show`
+//!   relaunch signal.
 //!
-//! The remaining pure core (menu) and Win32 adapters
-//! (card window, tray, popups) land in later
-//! tasks; `CLAUDE.md` lists the planned set.
+//! The remaining pure core (menu) and Win32 adapters (tray, popups) land
+//! in later tasks; `CLAUDE.md` lists the planned set.
 //!
 //! ## Where to read next
 //!
@@ -54,6 +57,7 @@
 //!   `windows = 0.61` quirks.
 
 pub mod alerts;
+pub mod card_wnd;
 pub mod clock;
 pub mod config;
 pub mod controller;
@@ -68,6 +72,7 @@ pub mod paths;
 pub mod polling;
 pub mod position;
 pub mod raster;
+pub mod single_instance;
 pub mod theme;
 pub mod visibility;
 pub mod volumes;

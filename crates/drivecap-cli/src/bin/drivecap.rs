@@ -25,11 +25,16 @@ use clap::{Parser, Subcommand};
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole, FreeConsole};
 
 use drivecap_cli::alerts::{Zone, zone_for};
+use drivecap_cli::card_wnd;
 use drivecap_cli::config::Config;
 use drivecap_cli::log::{self as drivecap_log, LogLevel};
 use drivecap_cli::model::format_free;
 use drivecap_cli::paths;
+use drivecap_cli::single_instance::{self, Instance};
 use drivecap_cli::volumes::{self, VolumeSource, Win32Volumes};
+
+/// Named mutex guarding the single running instance.
+const SINGLE_INSTANCE_MUTEX: &str = r"Local\Drivecap-SingleInstance-v1";
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -67,14 +72,26 @@ fn main() {
 }
 
 /// Production entry. Detaches from any inherited console first — no
-/// `println!` after this point (it would silently no-op).
+/// `println!` after this point (it would silently no-op). A second
+/// instance signals the first to show its card and exits 0.
 fn run(level: LogLevel) {
     // Intentionally ignored: fails only when there is no console to free.
     let _ = unsafe { FreeConsole() };
-    volumes::suppress_critical_error_dialogs();
     drivecap_log::init(level);
+    volumes::suppress_critical_error_dialogs();
     log::info!("drivecap {} starting", env!("CARGO_PKG_VERSION"));
-    // Message pump arrives with the card window (Task 12).
+    let _guard = match single_instance::acquire(SINGLE_INSTANCE_MUTEX) {
+        Instance::Primary(handle) => handle,
+        Instance::Secondary => {
+            log::info!("another instance is running; signalling it and exiting");
+            single_instance::signal_primary();
+            return;
+        }
+    };
+    match card_wnd::run() {
+        Ok(()) => log::info!("drivecap exiting"),
+        Err(e) => log::error!("drivecap stopped: {e}"),
+    }
 }
 
 /// Diagnostic table: watched volumes (`letter  label  free  zone  id`),
@@ -114,4 +131,23 @@ fn status() {
 
 fn print_row(letter: &str, label: &str, free: &str, zone: &str, id: &str) {
     println!("{letter:<3} {label:<20} {free:>9}  {zone:<13} {id}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_subcommand_parses_as_default_run() {
+        let cli = Cli::try_parse_from(["drivecap"]).expect("parses");
+        assert!(cli.cmd.is_none());
+    }
+
+    #[test]
+    fn log_level_and_status_subcommand_parse() {
+        let cli =
+            Cli::try_parse_from(["drivecap", "--log-level", "debug", "status"]).expect("parses");
+        assert!(matches!(cli.cmd, Some(Cmd::Status)));
+        assert!(matches!(cli.log_level, LogLevel::Debug));
+    }
 }

@@ -38,8 +38,8 @@ drivecap/
 │       │   ├── controller.rs           # (planned) Pure app controller: events in, Effects out
 │       │   ├── raster.rs               # (planned) Pure raster helpers (premultiplied alpha, halo)
 │       │   ├── paint.rs                # (planned) GDI painter → UpdateLayeredWindow
-│       │   ├── card_wnd.rs             # (planned) Card window, wndproc, message pump
-│       │   ├── single_instance.rs      # (planned) Named-mutex guard + show signal
+│       │   ├── card_wnd/               # Card window: mod (wndproc, pump, repaint), effects (apply_effects), input (mouse/drag), placement (monitors, position.json)
+│       │   ├── single_instance.rs      # Named-mutex guard + Drivecap.Show relaunch signal
 │       │   ├── tray.rs                 # (planned) Shell_NotifyIconW tray icon
 │       │   ├── menu.rs                 # (planned) Pure menu model
 │       │   ├── contextmenu.rs          # (planned) TrackPopupMenu wrapper
@@ -102,6 +102,8 @@ Per-user MSI (no UAC) installs to `%LOCALAPPDATA%\Drivecap\`, writes the Run key
 - **DPI**: the PerMonitorV2 manifest in `build.rs` is applied before any user code runs. All UI pixel values pass through `theme::scale(px, dpi)` (× `config.scale_pct / 100`) — no hardcoded pixels.
 - **Dark mode**: all colours come from the light/dark palette, chosen by `theme::read_dark_mode()` — never assume dark. The read is uncached so a theme switch repaints correctly; read it once per repaint, not per element.
 - **State directory**: persisted state lives under `~/.drivecap/` (`config.json`, `position.json`); the log is `%TEMP%\drivecap.log`. Don't add state files elsewhere.
+- **`WM_CLOSE` is the shutdown path**: the MSI's `util:CloseApplication` sends `WM_CLOSE` to the card and kills the process 500 ms later. `WM_CLOSE` and `Effect::Quit` share one handler (save `position.json`, `DestroyWindow`, `WM_DESTROY` → `PostQuitMessage(0)`) — keep it fast and never prompt or block in it.
+- **Card state re-entrancy**: `card_wnd`'s `AppState` is a `RefCell` in `GWLP_USERDATA`, reached only via `with_state`. Calls that re-enter the wndproc with handled messages (`ShowWindow`, `SetCapture`/`ReleaseCapture`, `DestroyWindow`, `ShellExecuteW`, `TrackPopupMenu`, `ChooseFontW`) go through a deferred `WinOp`, never inline while the state is borrowed.
 - **Never reuse exbar's UpgradeCode**: drivecap's MSI UpgradeCode is `F04B1403-DE21-41D0-9AB5-3C30AA482CAD`, fixed forever. Reusing exbar's would make one product's installer uninstall the other.
 
 ## Logging
