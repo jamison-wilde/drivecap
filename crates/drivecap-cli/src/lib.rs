@@ -30,8 +30,9 @@
 //! - [`alerts`] — zones, warning levels, debounce, snooze, reminder schedule.
 //! - [`palette`] — light/dark design tokens with config overrides.
 //! - [`model`] — surface view model: sorted rows, title, state dot, halo.
+//! - [`visibility`] — fade/hold/linger, hover rest, pinning and click-through.
 //!
-//! The remaining pure cores (visibility, layout, controller,
+//! The remaining pure cores (layout, controller,
 //! menu) and Win32 adapters (volumes, net probe, paint, card window,
 //! tray, popups) land in later tasks; `CLAUDE.md` lists the planned set.
 //!
@@ -50,3 +51,4 @@ pub mod model;
 pub mod palette;
 pub mod paths;
 pub mod theme;
+pub mod visibility;
