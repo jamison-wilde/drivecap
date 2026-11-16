@@ -126,7 +126,7 @@ The MSI:
 
 WiX v7 install (one-time per machine):
 ```
-dotnet tool install --global wix --version 7.*
+dotnet tool install --global wix --version 7.0.0
 wix eula accept wix7
 wix extension add --global WixToolset.Util.wixext/7.0.0
 wix extension add --global WixToolset.UI.wixext/7.0.0
